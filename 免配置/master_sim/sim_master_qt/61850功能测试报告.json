@@ -1,0 +1,62 @@
+{
+  "started": "2026-11-04T20:08:28",
+  "host": "192.168.0.10",
+  "passed": 6,
+  "total": 6,
+  "cases": [
+    {
+      "id": "CLI-01",
+      "name": "连接 SubStation + 通信工况",
+      "category": "工具栏/连接",
+      "passed": true,
+      "duration_ms": 150,
+      "notes": "exit=0, errors=0",
+      "log_snippet": "{\"evt\":\"ready\"}\n{\"evt\":\"connected\",\"host\":\"192.168.0.10\",\"port\":102}\n{\"evt\":\"comm_state\",\"ref\":\"SubStationLD0/LLN0$dsCommState\",\"entries\":[{\"idx\":1,\"stVal\":true,\"valid\":true},{\"idx\":2,\"stVal\":true,\"valid\":true},{\"idx\":3,\"stVal\":true,\"valid\":true},{\"idx\":4,\"stVal\":true,\"valid\":true},{\"idx\":5,\"stVal\":true,\"valid\":true},{\"idx\":6,\"stVal\":true,\"valid\":true},{\"idx\":7,\"stVal\":true,\"valid\":true},{\"idx\":8,\"stVal\":true,\"valid\":true},{\"idx\":9,\"stVal\":true,\"valid\":true},{\"idx\":10,\"stVal\":true,\"valid\":true},{\"idx\":11,\"stVal\":true,\"valid\":true},{\"idx\":12,\"stVal\":true,\"valid\":true},{\"idx\":13,\"stVal\":true,\"valid\":true},{\"idx\":14,\"stVal\":true,\"valid\":true},{\"idx\":15,\"stVal\":true,\"valid\":true},{\"idx\":16,\"stVal\":true,\"valid\":true},{\"idx\":17,\"stVal\":true,\"valid\":true},{\"idx\":18,\"stVal\":true,\"valid\":true},{\"idx\":19,\"stVal\":true,\"valid\":true},{\"idx\":20,\"stVal\":true,\"valid\":true},{\"idx\":21,\"stVal\":true,\"valid\":true},{\"idx\":22,\"stVal\":true,\"valid\":true},{\"idx\":23,\"stVal\":true,\"valid\":true},{\"idx\":24,\"stVal\":true,\"valid\":true},{\"idx\":25,\"stVal\":true,\"valid\":true},{\"idx\":26,\"stVal\":true,\"valid\":true},{\"idx\":27,\"stVal\":true,\"valid\":true},{\"idx\":28,\"stVal\":true,\"valid\":true},{\"idx\":29,\"stVal\":true,\"valid\":true},{\"idx\":30,\"stVal\":true,\"valid\":true}]}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"bye\"}"
+    },
+    {
+      "id": "CLI-02",
+      "name": "召唤数据集值 (dsRelayDin)",
+      "category": "遥信/召唤数据集值",
+      "passed": true,
+      "duration_ms": 245,
+      "notes": "",
+      "log_snippet": "{\"evt\":\"ready\"}\n{\"evt\":\"connected\",\"host\":\"192.168.0.10\",\"port\":102}\n{\"evt\":\"dataset\",\"ref\":\"E1Q1SB34LD0/LLN0$dsRelayDin\",\"rows\":[{\"idx\":0,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":1,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":2,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":3,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":4,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]}]}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"bye\"}"
+    },
+    {
+      "id": "CLI-03",
+      "name": "订阅 + 总召唤 + 取消订阅 (当前数据集 RCB)",
+      "category": "遥信/订阅与总召",
+      "passed": true,
+      "duration_ms": 240,
+      "notes": "errors=0",
+      "log_snippet": "{\"evt\":\"connected\",\"host\":\"192.168.0.10\",\"port\":102}\n{\"evt\":\"rcb_enabled\",\"handlerRef\":\"E1Q1SB34LD0/LLN0$BR$brcbRelayDin\",\"rcbGetRef\":\"E1Q1SB34LD0/LLN0$BR$brcbRelayDin09\"}\n{\"evt\":\"report\",\"rcb\":\"E1Q1SB34LD0/LLN0$BR$brcbRelayDin\",\"items\":[{\"idx\":0,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099627},{\"idx\":1,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099627},{\"idx\":2,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099627},{\"idx\":3,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099627},{\"idx\":4,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099627}]}\n{\"evt\":\"ok\",\"cmd\":\"gi\"}\n{\"evt\":\"report\",\"rcb\":\"E1Q1SB34LD0/LLN0$BR$brcbRelayDin\",\"items\":[{\"idx\":0,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099658},{\"idx\":1,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099658},{\"idx\":2,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099658},{\"idx\":3,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099658},{\"idx\":4,\"reason\":16,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"],\"ts_ms\":1793794099658}]}\n{\"evt\":\"ok\",\"cmd\":\"disable_rcb\"}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"bye\"}"
+    },
+    {
+      "id": "CLI-04",
+      "name": "录波文件列表",
+      "category": "录波文件",
+      "passed": true,
+      "duration_ms": 45142,
+      "notes": "",
+      "log_snippet": "{\"evt\":\"ready\"}\n{\"evt\":\"connected\",\"host\":\"192.168.0.10\",\"port\":102}\n{\"evt\":\"files\",\"path\":\"/COMTRADE/\",\"entries\":[],\"warn\":\"TIMEOUT\"}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"bye\"}"
+    },
+    {
+      "id": "CLI-05",
+      "name": "读装置多个数据集 (抽样批量)",
+      "category": "读当前装置所有数据集",
+      "passed": true,
+      "duration_ms": 548,
+      "notes": "dataset_ok=5/5, errors=0",
+      "log_snippet": "{\"evt\":\"dataset\",\"ref\":\"E1Q1SB34LD0/LLN0$dsAin\",\"rows\":[{\"idx\":0,\"name\":\"\",\"value\":[[0],\"0000000000000\",\"20261026122429.912Z\"]},{\"idx\":1,\"name\":\"\",\"value\":[[0],\"0000000000000\",\"20261026122429.912Z\"]}]}\n{\"evt\":\"dataset\",\"ref\":\"E1Q1SB34LD0/LLN0$dsDeviceState\",\"rows\":[{\"idx\":0,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":1,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":2,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]},{\"idx\":3,\"name\":\"\",\"value\":[false,\"0000000000000\",\"20261026122429.752Z\"]}]}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"bye\"}"
+    },
+    {
+      "id": "CLI-06",
+      "name": "断开",
+      "category": "工具栏/断开",
+      "passed": true,
+      "duration_ms": 124,
+      "notes": "",
+      "log_snippet": "{\"evt\":\"connected\",\"host\":\"192.168.0.10\",\"port\":102}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"disconnected\"}\n{\"evt\":\"bye\"}"
+    }
+  ]
+}

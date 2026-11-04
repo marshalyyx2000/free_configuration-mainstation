@@ -27,6 +27,10 @@ MasterSimShell::MasterSimShell(QWidget* parent)
     tabs->addTab(m_ops, tr("运维 / 下装"));
     tabs->addTab(m_mms, tr("61850 主站"));
     setCentralWidget(tabs);
+    connect(tabs, &QTabWidget::currentChanged, this, [this, tabs](int index) {
+        if (tabs->widget(index) == m_mms)
+            m_mms->connectSubstation();
+    });
 
     connect(m_ops, &OpsDeployWidget::requestJob, m_worker, &LabWorker::runJob, Qt::QueuedConnection);
     connect(m_ops, &OpsDeployWidget::modelOutputsChanged, m_mms, &MmsMasterWidget::reloadModelData);

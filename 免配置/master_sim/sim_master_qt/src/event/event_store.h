@@ -28,6 +28,7 @@ class EventStore : public QObject {
 public:
     explicit EventStore(QObject* parent = nullptr);
     void append(const StationEvent& ev);
+    void appendBatch(const QVector<StationEvent>& evs);
     QVector<StationEvent> snapshot() const;
     static constexpr int kMaxEvents = 10000;
 

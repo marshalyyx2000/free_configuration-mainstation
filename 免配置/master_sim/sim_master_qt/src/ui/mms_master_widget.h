@@ -14,6 +14,7 @@ class StationEventListWidget;
 class ReportCtrlPanel;
 class QStackedWidget;
 class QTabWidget;
+class QProgressDialog;
 class QLabel;
 class QTextEdit;
 
@@ -25,11 +26,11 @@ public:
 
 public slots:
     void reloadModelData();
+    void connectSubstation();
+    void disconnectSubstation();
 
 private slots:
     void openScd();
-    void connectSubstation();
-    void disconnectSubstation();
     void subscribeAllStation();
     void unsubscribeAllStation();
     void onIedSelected(const IedDeviceEntry& dev);
@@ -46,6 +47,8 @@ private:
     void refreshCurrentIed();
     void updateSubscribedUi();
     void appendEventFromReport(const QJsonObject& evt);
+    void appendMmsLog(const QString& msg);
+    void subscribeRcbDescriptors(const QVector<RcbDescriptor>& list, QProgressDialog* prog);
     IedPageSet* pagesFor(const QString& iedName);
     ReportCtrlPanel* panelForIed(const QString& iedName, ReportPanelType type);
 
@@ -57,6 +60,7 @@ private:
     StationEventListWidget* m_eventList = nullptr;
     QStackedWidget* m_iedStack = nullptr;
     QLabel* m_iedInfo = nullptr;
+    QLabel* m_linkStatus = nullptr;
     QTextEdit* m_log = nullptr;
     IedDeviceEntry m_currentDev;
     QHash<QString, IedPageSet> m_pages;

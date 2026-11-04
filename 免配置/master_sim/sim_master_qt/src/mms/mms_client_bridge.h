@@ -4,8 +4,8 @@
 #include <QObject>
 #include <QJsonObject>
 #include <QProcess>
-#include <QQueue>
-#include <QMutex>
+#include <QStringList>
+#include <QVector>
 
 class MmsClientBridge : public QObject {
     Q_OBJECT
@@ -13,6 +13,7 @@ public:
     explicit MmsClientBridge(QObject* parent = nullptr);
     bool available() const;
     bool connected() const { return m_connected; }
+    QString cliPath() const { return m_cliPath; }
     void setCliPath(const QString& path) { m_cliPath = path; }
 
 public slots:
@@ -20,7 +21,7 @@ public slots:
     void stopCli();
     void connectHost(const QString& host, int port = 102);
     void disconnectHost();
-    void readDataSet(const QString& dsRef, const QString& requestId);
+    void readDataSet(const QString& dsRef, const QString& requestId, const QStringList& items = {});
     void enableRcb(const QJsonObject& params);
     void disableRcb(const QString& handlerRef);
     void triggerGi(const QString& handlerRef);
@@ -33,16 +34,21 @@ signals:
 
 private slots:
     void onReadyRead();
+    void onReadyReadStderr();
     void onProcessFinished(int code, QProcess::ExitStatus status);
 
 private:
     void sendCommand(const QJsonObject& cmd);
+    void flushPending();
     void handleLine(const QByteArray& line);
 
     QProcess m_proc;
     QString m_cliPath;
     bool m_connected = false;
+    bool m_cliReady = false;
+    bool m_signalsHooked = false;
     QByteArray m_readBuffer;
+    QVector<QJsonObject> m_pending;
 };
 
 #endif

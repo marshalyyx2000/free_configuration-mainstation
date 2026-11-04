@@ -9,7 +9,7 @@
 #include <QStackedWidget>
 #include <QTableView>
 #include <QTreeWidget>
-#include <QVBoxLayout>
+#include <QTimer>
 
 class StationEventModel : public QAbstractTableModel {
 public:
@@ -130,7 +130,15 @@ StationEventListWidget::StationEventListWidget(EventStore* store, QWidget* paren
     connect(m_search, &QLineEdit::textChanged, this, &StationEventListWidget::onFilterChanged);
     connect(m_mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &StationEventListWidget::onFilterChanged);
     if (m_store)
-        connect(m_store, &EventStore::eventAppended, this, &StationEventListWidget::refreshView);
+        connect(m_store, &EventStore::eventAppended, this, [this]() {
+            if (!m_refreshTimer) {
+                m_refreshTimer = new QTimer(this);
+                m_refreshTimer->setSingleShot(true);
+                m_refreshTimer->setInterval(80);
+                connect(m_refreshTimer, &QTimer::timeout, this, &StationEventListWidget::refreshView);
+            }
+            m_refreshTimer->start();
+        });
     refreshView();
 }
 

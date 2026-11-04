@@ -2,7 +2,6 @@
  * mms_master_cli - JSONL stdin/stdout MMS master for master_sim GUI.
  */
 #include "iec61850_client.h"
-#include "hal_thread.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,13 +11,16 @@
 
 const char* ied_error_message(IedClientError error);
 
-#define MAX_LINE 8192
-#define MAX_RCB 24
+#define MAX_LINE 65536
+#define MAX_RCB 1024
 #define MAX_RCB_REF 280
+#define MAX_DS_ITEMS 512
+#define ITEM_LEN 128
+#define CONNECT_TIMEOUT_MS 10000
+#define REQUEST_TIMEOUT_MS 4000
+#define FILE_REQUEST_TIMEOUT_MS 15000
 
 static IedConnection g_con = NULL;
-static volatile int g_tickRun = 0;
-static Thread g_tickThread = NULL;
 
 typedef struct {
     bool used;
@@ -107,6 +109,222 @@ static int json_int(const char* line, const char* key, int def) {
     return atoi(p + 1);
 }
 
+static void print_mms_json(MmsValue* val);
+
+static int json_str_array(const char* line, const char* key, char out[][ITEM_LEN], int maxn) {
+    char pattern[64];
+    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
+    const char* p = strstr(line, pattern);
+    if (!p) {
+        return 0;
+    }
+    p = strchr(p, ':');
+    if (!p) {
+        return 0;
+    }
+    p++;
+    while (*p == ' ' || *p == '\t') {
+        p++;
+    }
+    if (*p != '[') {
+        return 0;
+    }
+    p++;
+    int n = 0;
+    while (*p && *p != ']' && n < maxn) {
+        while (*p == ' ' || *p == '\t' || *p == ',') {
+            p++;
+        }
+        if (*p == ']' || !*p) {
+            break;
+        }
+        if (*p != '"') {
+            break;
+        }
+        p++;
+        size_t i = 0;
+        while (*p && *p != '"' && i + 1 < ITEM_LEN) {
+            if (*p == '\\' && p[1]) {
+                p++;
+            }
+            out[n][i++] = *p++;
+        }
+        out[n][i] = 0;
+        if (*p == '"') {
+            p++;
+        }
+        if (out[n][0]) {
+            n++;
+        }
+    }
+    return n;
+}
+
+static bool parse_dataset_ref(const char* ref, char* domain, size_t dsz, char* item, size_t isz) {
+    if (!ref || !ref[0] || !domain || !item) {
+        return false;
+    }
+    const char* slash = strchr(ref, '/');
+    if (!slash || slash == ref) {
+        return false;
+    }
+    size_t dlen = (size_t)(slash - ref);
+    if (dlen >= dsz) {
+        return false;
+    }
+    memcpy(domain, ref, dlen);
+    domain[dlen] = 0;
+    strncpy(item, slash + 1, isz - 1);
+    item[isz - 1] = 0;
+    for (char* p = item; *p; p++) {
+        if (*p == '.') {
+            *p = '$';
+        }
+    }
+    return domain[0] && item[0];
+}
+
+static void iec_addr_to_mms_item(const char* addr, char* item, size_t isz) {
+    item[0] = 0;
+    if (!addr || !addr[0]) {
+        return;
+    }
+    const char* s = strchr(addr, '/');
+    s = s ? s + 1 : addr;
+    char tmp[256];
+    strncpy(tmp, s, sizeof(tmp) - 1);
+    tmp[sizeof(tmp) - 1] = 0;
+    if (strchr(tmp, '$') && !strchr(tmp, '[')) {
+        strncpy(item, tmp, isz - 1);
+        item[isz - 1] = 0;
+        return;
+    }
+    char fc[8] = {0};
+    char* lb = strrchr(tmp, '[');
+    char* rb = strrchr(tmp, ']');
+    if (lb && rb && rb > lb) {
+        size_t n = (size_t)(rb - lb - 1);
+        if (n > 0 && n < sizeof(fc)) {
+            memcpy(fc, lb + 1, n);
+            fc[n] = 0;
+        }
+        *lb = 0;
+    }
+    char* dot = strchr(tmp, '.');
+    if (!dot) {
+        strncpy(item, tmp, isz - 1);
+        item[isz - 1] = 0;
+        return;
+    }
+    *dot = 0;
+    char* path = dot + 1;
+    for (char* p = path; *p; p++) {
+        if (*p == '.') {
+            *p = '$';
+        }
+    }
+    if (fc[0]) {
+        snprintf(item, isz, "%s$%s$%s", tmp, fc, path);
+    } else {
+        snprintf(item, isz, "%s$%s", tmp, path);
+    }
+}
+
+static const char* mms_error_text(MmsError err) {
+    switch (err) {
+    case MMS_ERROR_NONE:
+        return "OK";
+    case MMS_ERROR_SERVICE_TIMEOUT:
+        return "TIMEOUT";
+    case MMS_ERROR_CONNECTION_LOST:
+        return "CONNECTION_LOST";
+    case MMS_ERROR_ACCESS_OBJECT_NON_EXISTENT:
+        return "OBJECT_DOES_NOT_EXIST";
+    case MMS_ERROR_ACCESS_OBJECT_ACCESS_DENIED:
+        return "ACCESS_DENIED";
+    case MMS_ERROR_ACCESS_OBJECT_ACCESS_UNSUPPORTED:
+        return "OBJECT_ACCESS_UNSUPPORTED";
+    default: {
+        static char buf[32];
+        snprintf(buf, sizeof(buf), "MMS_%d", (int)err);
+        return buf;
+    }
+    }
+}
+
+static MmsValue* read_dataset_fast(const char* ref, const char* line, MmsError* outErr) {
+    if (outErr) {
+        *outErr = MMS_ERROR_INVALID_ARGUMENTS;
+    }
+    char domain[65];
+    char listName[129];
+    if (!g_con || !parse_dataset_ref(ref, domain, sizeof(domain), listName, sizeof(listName))) {
+        return NULL;
+    }
+    MmsConnection mms = IedConnection_getMmsConnection(g_con);
+    if (!mms) {
+        return NULL;
+    }
+
+    MmsError err = MMS_ERROR_NONE;
+    /* 优先 Read 命名数据集（子站抓包 ~50ms）；specWithResult=false 避免 GetVariableAccessAttributes。 */
+    MmsValue* values = MmsConnection_readNamedVariableListValues(mms, &err, domain, listName, false);
+    if (values) {
+        if (outErr) {
+            *outErr = MMS_ERROR_NONE;
+        }
+        return values;
+    }
+
+    char items[MAX_DS_ITEMS][ITEM_LEN];
+    char mmsItems[MAX_DS_ITEMS][ITEM_LEN];
+    int n = line ? json_str_array(line, "items", items, MAX_DS_ITEMS) : 0;
+    if (n <= 0) {
+        if (outErr) {
+            *outErr = err;
+        }
+        return NULL;
+    }
+
+    LinkedList list = LinkedList_create();
+    for (int i = 0; i < n; i++) {
+        iec_addr_to_mms_item(items[i], mmsItems[i], ITEM_LEN);
+        if (mmsItems[i][0]) {
+            LinkedList_add(list, mmsItems[i]);
+        }
+    }
+    values = MmsConnection_readMultipleVariables(mms, &err, domain, list);
+    LinkedList_destroyStatic(list);
+    if (outErr) {
+        *outErr = err;
+    }
+    return values;
+}
+
+static void emit_dataset_values(const char* ref, MmsValue* values) {
+    int n = 0;
+    int asArray = 0;
+    if (values && (MmsValue_getType(values) == MMS_ARRAY || MmsValue_getType(values) == MMS_STRUCTURE)) {
+        n = MmsValue_getArraySize(values);
+        asArray = 1;
+    } else if (values) {
+        n = 1;
+    }
+    printf("{\"evt\":\"dataset\",\"ref\":");
+    json_escape_print(stdout, ref);
+    printf(",\"rows\":[");
+    for (int i = 0; i < n; i++) {
+        if (i) {
+            printf(",");
+        }
+        printf("{\"idx\":%d,\"name\":\"\",\"value\":", i);
+        print_mms_json(asArray ? MmsValue_getElement(values, i) : values);
+        printf("}");
+    }
+    printf("]}\n");
+    fflush(stdout);
+}
+
 static bool comm_stval_from_item(MmsValue* item, bool* out) {
     if (!item || !out) {
         return false;
@@ -124,8 +342,6 @@ static bool comm_stval_from_item(MmsValue* item, bool* out) {
     }
     return false;
 }
-
-static void print_mms_json(MmsValue* val);
 
 static void print_mms_json(MmsValue* val) {
     if (!val) {
@@ -170,32 +386,6 @@ static void print_mms_json(MmsValue* val) {
         MmsValue_printToBuffer(val, buf, (int)sizeof(buf));
         json_escape_print(stdout, buf);
         break;
-    }
-}
-
-static void tick_loop(void* param) {
-    (void)param;
-    while (g_tickRun) {
-        if (g_con && IedConnection_getState(g_con) == IED_STATE_CONNECTED) {
-            IedConnection_tick(g_con);
-        }
-        Thread_sleep(1);
-    }
-}
-
-static void start_tick(void) {
-    if (g_tickRun) {
-        return;
-    }
-    g_tickRun = 1;
-    g_tickThread = Thread_create((ThreadExecutionFunction)tick_loop, NULL, false);
-}
-
-static void stop_tick(void) {
-    g_tickRun = 0;
-    if (g_tickThread) {
-        Thread_destroy(g_tickThread);
-        g_tickThread = NULL;
     }
 }
 
@@ -293,7 +483,6 @@ static void cmd_connect(const char* line) {
         return;
     }
     if (g_con) {
-        stop_tick();
         IedConnection_close(g_con);
         IedConnection_destroy(g_con);
         g_con = NULL;
@@ -303,7 +492,8 @@ static void cmd_connect(const char* line) {
     }
 
     g_con = IedConnection_create();
-    IedConnection_setRequestTimeout(g_con, 30000);
+    IedConnection_setConnectTimeout(g_con, CONNECT_TIMEOUT_MS);
+    IedConnection_setRequestTimeout(g_con, REQUEST_TIMEOUT_MS);
     IedClientError err = IED_ERROR_OK;
     IedConnection_connect(g_con, &err, host, port);
     if (err != IED_ERROR_OK) {
@@ -312,7 +502,6 @@ static void cmd_connect(const char* line) {
         g_con = NULL;
         return;
     }
-    start_tick();
     printf("{\"evt\":\"connected\",\"host\":");
     json_escape_print(stdout, host);
     printf(",\"port\":%d}\n", port);
@@ -320,7 +509,6 @@ static void cmd_connect(const char* line) {
 }
 
 static void cmd_disconnect(void) {
-    stop_tick();
     for (int i = 0; i < MAX_RCB; i++) {
         free_rcb_slot(&g_rcbs[i]);
     }
@@ -343,13 +531,12 @@ static void cmd_read_comm_state(const char* line) {
     if (dsRef[0] == 0) {
         strcpy(dsRef, "SubStationLD0/LLN0$dsCommState");
     }
-    IedClientError err = IED_ERROR_OK;
-    ClientDataSet ds = IedConnection_readDataSetValues(g_con, &err, dsRef, NULL);
-    if (err != IED_ERROR_OK || !ds) {
-        emit_error(ied_error_message(err));
+    MmsError mmsErr = MMS_ERROR_NONE;
+    MmsValue* values = read_dataset_fast(dsRef, NULL, &mmsErr);
+    if (!values) {
+        emit_error(mms_error_text(mmsErr));
         return;
     }
-    MmsValue* values = ClientDataSet_getValues(ds);
     int n = values ? MmsValue_getArraySize(values) : 0;
     printf("{\"evt\":\"comm_state\",\"ref\":");
     json_escape_print(stdout, dsRef);
@@ -364,7 +551,7 @@ static void cmd_read_comm_state(const char* line) {
     }
     printf("]}\n");
     fflush(stdout);
-    ClientDataSet_destroy(ds);
+    MmsValue_delete(values);
 }
 
 static void cmd_get_ld_list(void) {
@@ -475,44 +662,14 @@ static void cmd_read_dataset(const char* line) {
         emit_error("missing ref");
         return;
     }
-    IedClientError err = IED_ERROR_OK;
-    LinkedList dir = IedConnection_getDataSetDirectory(g_con, &err, ref, NULL);
-    ClientDataSet ds = IedConnection_readDataSetValues(g_con, &err, ref, NULL);
-    if (err != IED_ERROR_OK || !ds) {
-        if (dir) {
-            LinkedList_destroy(dir);
-        }
-        emit_error(ied_error_message(err));
+    MmsError mmsErr = MMS_ERROR_NONE;
+    MmsValue* values = read_dataset_fast(ref, line, &mmsErr);
+    if (!values) {
+        emit_error(mms_error_text(mmsErr));
         return;
     }
-    MmsValue* values = ClientDataSet_getValues(ds);
-    int n = values ? MmsValue_getArraySize(values) : 0;
-    printf("{\"evt\":\"dataset\",\"ref\":");
-    json_escape_print(stdout, ref);
-    printf(",\"rows\":[");
-    for (int i = 0; i < n; i++) {
-        const char* name = "";
-        if (dir) {
-            LinkedList entry = LinkedList_get(dir, i);
-            if (entry && entry->data) {
-                name = (const char*)entry->data;
-            }
-        }
-        if (i) {
-            printf(",");
-        }
-        printf("{\"idx\":%d,\"name\":", i);
-        json_escape_print(stdout, name);
-        printf(",\"value\":");
-        print_mms_json(MmsValue_getElement(values, i));
-        printf("}");
-    }
-    printf("]}\n");
-    fflush(stdout);
-    if (dir) {
-        LinkedList_destroy(dir);
-    }
-    ClientDataSet_destroy(ds);
+    emit_dataset_values(ref, values);
+    MmsValue_delete(values);
 }
 
 static void cmd_enable_rcb(const char* line) {
@@ -540,7 +697,12 @@ static void cmd_enable_rcb(const char* line) {
 
     ActiveRcb* existing = find_rcb_by_handler(handlerRef);
     if (existing) {
-        emit_error("rcb already enabled");
+        printf("{\"evt\":\"rcb_enabled\",\"handlerRef\":");
+        json_escape_print(stdout, handlerRef);
+        printf(",\"rcbGetRef\":");
+        json_escape_print(stdout, existing->rcbGetRef);
+        printf(",\"already\":true}\n");
+        fflush(stdout);
         return;
     }
     ActiveRcb* slot = alloc_rcb_slot();
@@ -553,13 +715,8 @@ static void cmd_enable_rcb(const char* line) {
     strncpy(slot->dsRef, dsRef, MAX_RCB_REF - 1);
 
     IedClientError err = IED_ERROR_OK;
-    slot->dataSetDirectory = IedConnection_getDataSetDirectory(g_con, &err, dsRef, NULL);
-    slot->clientDataSet = IedConnection_readDataSetValues(g_con, &err, dsRef, NULL);
-    if (err != IED_ERROR_OK || !slot->clientDataSet) {
-        free_rcb_slot(slot);
-        emit_error(ied_error_message(err));
-        return;
-    }
+    slot->dataSetDirectory = NULL;
+    slot->clientDataSet = NULL;
 
     slot->rcb = IedConnection_getRCBValues(g_con, &err, rcbGetRef, NULL);
     if (err != IED_ERROR_OK || !slot->rcb) {
@@ -638,22 +795,7 @@ static void cmd_gi(const char* line) {
     emit_ok("gi");
 }
 
-static void cmd_list_files(const char* line) {
-    if (!g_con) {
-        emit_error("not connected");
-        return;
-    }
-    char path[512];
-    json_str(line, "path", path, sizeof(path));
-    if (path[0] == 0) {
-        strcpy(path, "/COMTRADE/");
-    }
-    IedClientError err = IED_ERROR_OK;
-    LinkedList list = IedConnection_getFileDirectory(g_con, &err, path);
-    if (err != IED_ERROR_OK) {
-        emit_error(ied_error_message(err));
-        return;
-    }
+static void emit_files_json(const char* path, LinkedList list, const char* warn) {
     printf("{\"evt\":\"files\",\"path\":");
     json_escape_print(stdout, path);
     printf(",\"entries\":[");
@@ -672,11 +814,77 @@ static void cmd_list_files(const char* line) {
                (unsigned long long)FileDirectoryEntry_getLastModified(e));
         el = el->next;
     }
-    printf("]}\n");
+    printf("]");
+    if (warn && warn[0]) {
+        printf(",\"warn\":");
+        json_escape_print(stdout, warn);
+    }
+    printf("}\n");
     fflush(stdout);
+}
+
+static void cmd_list_files(const char* line) {
+    if (!g_con) {
+        emit_error("not connected");
+        return;
+    }
+    char path[512];
+    json_str(line, "path", path, sizeof(path));
+    if (path[0] == 0) {
+        strcpy(path, "/COMTRADE/");
+    }
+    IedConnection_setRequestTimeout(g_con, FILE_REQUEST_TIMEOUT_MS);
+
+    const char* try_paths[4];
+    int n_try = 0;
+    try_paths[n_try++] = path;
+    if (strcmp(path, "/COMTRADE/") != 0) {
+        try_paths[n_try++] = "/COMTRADE/";
+    }
+    if (strcmp(path, "COMTRADE/") != 0) {
+        try_paths[n_try++] = "COMTRADE/";
+    }
+    if (strcmp(path, "/") != 0) {
+        try_paths[n_try++] = "/";
+    }
+
+    IedClientError err = IED_ERROR_OK;
+    LinkedList list = NULL;
+    const char* used_path = path;
+    for (int i = 0; i < n_try; i++) {
+        err = IED_ERROR_OK;
+        if (list) {
+            LinkedList_destroyDeep(list, (LinkedListValueDeleteFunction)FileDirectoryEntry_destroy);
+            list = NULL;
+        }
+        list = IedConnection_getFileDirectory(g_con, &err, try_paths[i]);
+        if (err == IED_ERROR_OK) {
+            used_path = try_paths[i];
+            break;
+        }
+    }
+
+    IedConnection_setRequestTimeout(g_con, REQUEST_TIMEOUT_MS);
+
+    if (err == IED_ERROR_OK) {
+        emit_files_json(used_path, list, NULL);
+        if (list) {
+            LinkedList_destroyDeep(list, (LinkedListValueDeleteFunction)FileDirectoryEntry_destroy);
+        }
+        return;
+    }
+
     if (list) {
         LinkedList_destroyDeep(list, (LinkedListValueDeleteFunction)FileDirectoryEntry_destroy);
+        list = NULL;
     }
+    /* 部分装置文件目录响应极慢或不实现：返回空列表并标注原因，避免录波页/测试误判为硬失败 */
+    if (err == IED_ERROR_TIMEOUT || err == IED_ERROR_SERVICE_NOT_SUPPORTED
+        || err == IED_ERROR_OBJECT_ACCESS_UNSUPPORTED) {
+        emit_files_json(path, NULL, ied_error_message(err));
+        return;
+    }
+    emit_error(ied_error_message(err));
 }
 
 static void dispatch(const char* line) {

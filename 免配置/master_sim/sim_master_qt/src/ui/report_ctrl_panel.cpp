@@ -5,11 +5,34 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QLabel>
+#include <QSet>
+#include <QMessageBox>
+#include <QProgressDialog>
+#include <QShowEvent>
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QTabWidget>
+#include <QTimer>
 #include <QVBoxLayout>
+
+QString ReportCtrlPanel::jsonValueText(const QJsonValue& v)
+{
+    if (v.isBool())
+        return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    if (v.isDouble())
+        return QString::number(v.toDouble(), 'g', 12);
+    if (v.isString())
+        return v.toString();
+    if (v.isArray())
+        return QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact));
+    if (v.isObject())
+        return QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
+    return QString();
+}
 
 ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWidget* parent)
     : QWidget(parent)
@@ -25,26 +48,39 @@ ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWi
     m_upper->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_upper->horizontalHeader()->setStretchLastSection(true);
 
-    m_lower = new QTableWidget(split);
+    auto* lowerWrap = new QWidget(split);
+    auto* lowerLayout = new QVBoxLayout(lowerWrap);
+    lowerLayout->setContentsMargins(0, 0, 0, 0);
+    lowerLayout->setSpacing(4);
+
+    auto* midBtns = new QHBoxLayout;
+    m_btnReadDs = new QPushButton(tr("召唤数据集值"), lowerWrap);
+    m_btnSubCurrent = new QPushButton(tr("订阅当前数据集"), lowerWrap);
+    m_btnGiCurrent = new QPushButton(tr("总召唤当前数据集"), lowerWrap);
+    midBtns->addWidget(m_btnReadDs);
+    midBtns->addWidget(m_btnSubCurrent);
+    midBtns->addWidget(m_btnGiCurrent);
+    midBtns->addStretch();
+
+    m_lower = new QTableWidget(lowerWrap);
     m_lower->setColumnCount(4);
     m_lower->setHorizontalHeaderLabels({ tr("描述"), tr("地址"), tr("前值"), tr("后值") });
     m_lower->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_lower->horizontalHeader()->setStretchLastSection(true);
 
+    lowerLayout->addLayout(midBtns);
+    lowerLayout->addWidget(m_lower, 1);
+
     split->addWidget(m_upper);
-    split->addWidget(m_lower);
+    split->addWidget(lowerWrap);
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 4);
 
     auto* btns = new QHBoxLayout;
-    m_btnSub = new QPushButton(tr("订阅 MMS 报告控制块"), this);
-    m_btnGi = new QPushButton(tr("发起总召唤"), this);
     m_btnAll = new QPushButton(tr("全部订阅"), this);
-    m_btnRead = new QPushButton(tr("读当前值"), this);
-    btns->addWidget(m_btnSub);
-    btns->addWidget(m_btnGi);
+    m_btnReadAll = new QPushButton(tr("读当前装置所有数据集"), this);
     btns->addWidget(m_btnAll);
-    btns->addWidget(m_btnRead);
+    btns->addWidget(m_btnReadAll);
     btns->addStretch();
 
     auto* layout = new QVBoxLayout(this);
@@ -52,35 +88,51 @@ ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWi
     layout->addLayout(btns);
 
     connect(m_upper, &QTableWidget::itemSelectionChanged, this, &ReportCtrlPanel::onUpperSelectionChanged);
-    connect(m_btnSub, &QPushButton::clicked, this, &ReportCtrlPanel::onSubscribe);
+    connect(m_btnReadDs, &QPushButton::clicked, this, &ReportCtrlPanel::onReadCurrentDataset);
+    connect(m_btnSubCurrent, &QPushButton::clicked, this, &ReportCtrlPanel::onSubscribeCurrent);
+    connect(m_btnGiCurrent, &QPushButton::clicked, this, &ReportCtrlPanel::onGiCurrent);
     connect(m_btnAll, &QPushButton::clicked, this, &ReportCtrlPanel::onSubscribeAll);
-    connect(m_btnGi, &QPushButton::clicked, this, &ReportCtrlPanel::onGi);
-    connect(m_btnRead, &QPushButton::clicked, this, &ReportCtrlPanel::onReadValues);
+    connect(m_btnReadAll, &QPushButton::clicked, this, &ReportCtrlPanel::onReadAllDeviceDatasets);
 
     if (type == ReportPanelType::Wave) {
         m_upper->setColumnCount(2);
         m_upper->setHorizontalHeaderLabels({ tr("文件名"), tr("大小") });
-        m_btnSub->setVisible(false);
-        m_btnGi->setVisible(false);
+        m_btnReadDs->setVisible(false);
+        m_btnSubCurrent->setVisible(false);
+        m_btnGiCurrent->setVisible(false);
         m_btnAll->setVisible(false);
+        m_btnReadAll->setVisible(false);
     } else if (type == ReportPanelType::ReportInst) {
-        m_btnSub->setVisible(false);
-        m_btnGi->setVisible(false);
+        m_btnReadDs->setVisible(false);
+        m_btnSubCurrent->setVisible(false);
+        m_btnGiCurrent->setVisible(false);
         m_btnAll->setVisible(false);
     }
+}
+
+ReportCtrlPanel::~ReportCtrlPanel()
+{
+    finishBulkRead();
 }
 
 void ReportCtrlPanel::setIed(const IedDeviceEntry& dev, const IedModel* model)
 {
     m_dev = dev;
     m_model = model;
+    m_waveListDone = false;
     rebuildUpper();
 }
 
 void ReportCtrlPanel::setSubscribedHandlers(const QSet<QString>& handlers)
 {
     m_subscribed = handlers;
-    rebuildUpper();
+    for (int r = 0; r < m_rows.size(); ++r) {
+        const bool sub = m_subscribed.contains(m_rows[r].handlerRef);
+        if (QTableWidgetItem* item = m_upper->item(r, 6))
+            item->setText(sub ? tr("已订阅") : QString());
+        else if (m_upper->columnCount() > 6)
+            m_upper->setItem(r, 6, new QTableWidgetItem(sub ? tr("已订阅") : QString()));
+    }
 }
 
 void ReportCtrlPanel::rebuildUpper()
@@ -89,8 +141,6 @@ void ReportCtrlPanel::rebuildUpper()
     m_upper->setRowCount(0);
     m_lower->setRowCount(0);
     if (m_type == ReportPanelType::Wave) {
-        if (m_mms && m_mms->connected())
-            m_mms->listFiles(m_dev.wavePath, QString());
         return;
     }
     if (!m_model)
@@ -104,24 +154,87 @@ void ReportCtrlPanel::rebuildUpper()
         seenDs.insert(rpt.datSet);
         RowInfo row;
         row.dsName = rpt.datSet;
-        row.dsRef = ScdModelLoader::datasetRef(m_dev.iedName, rpt.datSet);
+        row.dsRef = ScdModelLoader::datasetRef(m_dev.iedName, rpt.datSet, rpt.ldInst);
         row.rcbName = rpt.name;
         row.buffered = rpt.buffered;
-        row.handlerRef = ScdModelLoader::rcbHandlerRef(m_dev.iedName, rpt.name, rpt.buffered);
-        row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, m_dev.rptno, rpt.buffered);
+        row.handlerRef = ScdModelLoader::rcbHandlerRef(m_dev.iedName, rpt.name, rpt.buffered, rpt.ldInst);
+        row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, m_dev.rptno, rpt.buffered, rpt.ldInst);
         m_rows.append(row);
+
+        const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, rpt.datSet);
+        const int memberCount = ds ? ds->members.size() : 0;
 
         const int r = m_upper->rowCount();
         m_upper->insertRow(r);
-        m_upper->setItem(r, 0, new QTableWidgetItem(rpt.datSet));
-        m_upper->setItem(r, 1, new QTableWidgetItem(QString()));
+        m_upper->setItem(r, 0, new QTableWidgetItem(ds && !ds->desc.isEmpty() ? ds->desc : rpt.datSet));
+        m_upper->setItem(r, 1, new QTableWidgetItem(memberCount > 0 ? QString::number(memberCount) : QString()));
         m_upper->setItem(r, 2, new QTableWidgetItem(rpt.datSet));
         m_upper->setItem(r, 3, new QTableWidgetItem(rpt.name));
-        m_upper->setItem(r, 4, new QTableWidgetItem(QString()));
-        m_upper->setItem(r, 5, new QTableWidgetItem(QString()));
+        const QString rptId = (rpt.rptId.isEmpty() || rpt.rptId == QStringLiteral("NULL")) ? QString() : rpt.rptId;
+        m_upper->setItem(r, 4, new QTableWidgetItem(rptId));
+        m_upper->setItem(r, 5, new QTableWidgetItem(rpt.confRev > 0 ? QString::number(rpt.confRev) : QString()));
         const bool sub = m_subscribed.contains(row.handlerRef);
         m_upper->setItem(r, 6, new QTableWidgetItem(sub ? tr("已订阅") : QString()));
     }
+    if (m_upper->rowCount() > 0 && m_upper->currentRow() < 0)
+        m_upper->selectRow(0);
+    if (m_upper->currentRow() >= 0)
+        populateLowerFromModel(currentRow());
+}
+
+void ReportCtrlPanel::populateLowerFromModel(const RowInfo& row)
+{
+    if (m_type == ReportPanelType::Wave)
+        return;
+    const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, row.dsName);
+    if (!ds || ds->members.isEmpty()) {
+        m_lower->setRowCount(0);
+        return;
+    }
+    m_lower->setRowCount(ds->members.size());
+    for (int i = 0; i < ds->members.size(); ++i) {
+        const DataSetMember& m = ds->members[i];
+        m_lower->setItem(i, 0, new QTableWidgetItem(m.desc));
+        m_lower->setItem(i, 1, new QTableWidgetItem(m.address));
+        m_lower->setItem(i, 2, new QTableWidgetItem(QString()));
+        m_lower->setItem(i, 3, new QTableWidgetItem(QString()));
+    }
+    applyCachedValues(row);
+}
+
+void ReportCtrlPanel::applyCachedValues(const RowInfo& row)
+{
+    if (row.dsRef.isEmpty() || !m_dsCache.contains(row.dsRef))
+        return;
+    fillLowerFromJson(m_dsCache.value(row.dsRef));
+}
+
+void ReportCtrlPanel::updateEntryCountForRef(const QString& dsRef, int count)
+{
+    for (int r = 0; r < m_rows.size(); ++r) {
+        if (m_rows[r].dsRef != dsRef)
+            continue;
+        if (QTableWidgetItem* item = m_upper->item(r, 1))
+            item->setText(count > 0 ? QString::number(count) : QString());
+    }
+}
+
+void ReportCtrlPanel::onConnectionReady()
+{
+    auto* tabs = qobject_cast<QTabWidget*>(parentWidget());
+    if (tabs && tabs->currentWidget() != this)
+        return;
+    if (m_upper->currentRow() < 0 && m_upper->rowCount() > 0)
+        m_upper->selectRow(0);
+}
+
+void ReportCtrlPanel::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (m_type != ReportPanelType::Wave || m_waveListDone || !m_mms || !m_mms->connected())
+        return;
+    m_waveListDone = true;
+    m_mms->listFiles(m_dev.wavePath, QString());
 }
 
 ReportCtrlPanel::RowInfo ReportCtrlPanel::currentRow() const
@@ -134,19 +247,22 @@ ReportCtrlPanel::RowInfo ReportCtrlPanel::currentRow() const
 
 void ReportCtrlPanel::onUpperSelectionChanged()
 {
-    onReadValues();
+    populateLowerFromModel(currentRow());
 }
 
-void ReportCtrlPanel::onReadValues()
+void ReportCtrlPanel::onReadCurrentDataset()
 {
     const RowInfo row = currentRow();
-    if (!row.dsRef.isEmpty() && m_mms && m_mms->connected()) {
-        m_pendingDsReq = row.dsRef;
-        m_mms->readDataSet(row.dsRef, row.dsRef);
+    if (row.dsRef.isEmpty() || !m_mms || !m_mms->connected()) {
+        QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation 并选择数据集"));
+        return;
     }
+    m_pendingDsReq = row.dsRef;
+    emit logLine(tr("召唤数据集 %1").arg(row.dsRef));
+    m_mms->readDataSet(row.dsRef, row.dsRef);
 }
 
-void ReportCtrlPanel::onSubscribe()
+void ReportCtrlPanel::onSubscribeCurrent()
 {
     const RowInfo row = currentRow();
     if (row.handlerRef.isEmpty() || !m_mms)
@@ -158,36 +274,220 @@ void ReportCtrlPanel::onSubscribe()
     });
 }
 
+void ReportCtrlPanel::onGiCurrent()
+{
+    const RowInfo row = currentRow();
+    if (row.handlerRef.isEmpty() || !m_mms)
+        return;
+    if (!m_subscribed.contains(row.handlerRef)) {
+        emit logLine(tr("总召唤未执行：请先订阅当前数据集"));
+        return;
+    }
+    emit logLine(tr("发送总召唤 %1").arg(row.handlerRef));
+    m_mms->triggerGi(row.handlerRef);
+}
+
 void ReportCtrlPanel::onSubscribeAll()
 {
     emit subscribeAllForIed(m_dev.iedName);
 }
 
-void ReportCtrlPanel::onGi()
+bool ReportCtrlPanel::ownsDataSetRef(const QString& dsRef) const
 {
+    if (dsRef.isEmpty())
+        return false;
+    if (dsRef == m_pendingDsReq)
+        return true;
+    for (const RowInfo& row : m_rows) {
+        if (row.dsRef == dsRef)
+            return true;
+    }
+    return false;
+}
+
+QStringList ReportCtrlPanel::allDeviceDataSetRefs() const
+{
+    QStringList refs;
+    if (!m_model)
+        return refs;
+    QSet<QString> seen;
+    for (const DataSetEntry& ds : m_model->datasets) {
+        const QString ref = ScdModelLoader::datasetRef(m_dev.iedName, ds.name, ds.ldInst);
+        if (ref.isEmpty() || seen.contains(ref))
+            continue;
+        seen.insert(ref);
+        refs.append(ref);
+    }
+    return refs;
+}
+
+QStringList ReportCtrlPanel::mmsItemsForRef(const QString& dsRef) const
+{
+    QStringList items;
+    if (!m_model || dsRef.isEmpty())
+        return items;
+    for (const DataSetEntry& ds : m_model->datasets) {
+        if (ScdModelLoader::datasetRef(m_dev.iedName, ds.name, ds.ldInst) != dsRef)
+            continue;
+        for (const DataSetMember& m : ds.members) {
+            const QString item = ScdModelLoader::mmsItemIdFromAddress(m.address);
+            if (!item.isEmpty())
+                items.append(item);
+        }
+        break;
+    }
+    return items;
+}
+
+void ReportCtrlPanel::onReadAllDeviceDatasets()
+{
+    if (!m_mms || !m_mms->connected()) {
+        QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
+        return;
+    }
+    const QStringList refs = allDeviceDataSetRefs();
+    if (refs.isEmpty()) {
+        QMessageBox::information(this, tr("提示"), tr("当前装置没有可读取的数据集"));
+        return;
+    }
+    if (m_bulkActive)
+        finishBulkRead();
+
+    m_bulkQueue = refs;
+    m_bulkTotal = refs.size();
+    m_bulkDone = 0;
+    m_bulkActive = true;
+    m_bulkAwaitingResponse = false;
+    m_bulkProg = new QProgressDialog(tr("正在读取 %1 的数据集…").arg(m_dev.iedName), tr("取消"), 0, m_bulkTotal, this);
+    m_bulkProg->setWindowModality(Qt::WindowModal);
+    m_bulkProg->setMinimumDuration(0);
+    m_bulkProg->setValue(0);
+    connect(m_bulkProg, &QProgressDialog::canceled, this, [this]() { finishBulkRead(); });
+    sendNextBulkRead();
+}
+
+void ReportCtrlPanel::sendNextBulkRead()
+{
+    if (!m_bulkActive)
+        return;
+    if (!m_mms || !m_mms->connected()) {
+        finishBulkRead();
+        return;
+    }
+    if (m_bulkQueue.isEmpty() || (m_bulkProg && m_bulkProg->wasCanceled())) {
+        finishBulkRead();
+        return;
+    }
+    const QString ref = m_bulkQueue.takeFirst();
+    m_pendingDsReq = ref;
+    m_bulkAwaitingResponse = true;
+    m_mms->readDataSet(ref, ref);
+}
+
+void ReportCtrlPanel::scheduleBulkNext(bool stopAfter)
+{
+    if (!m_bulkActive)
+        return;
+    QTimer::singleShot(stopAfter ? 0 : 30, this, [this, stopAfter]() {
+        if (!m_bulkActive)
+            return;
+        if (stopAfter) {
+            finishBulkRead();
+            return;
+        }
+        sendNextBulkRead();
+    });
+}
+
+void ReportCtrlPanel::onBulkStepDone(bool stopAfter)
+{
+    if (!m_bulkActive)
+        return;
+    m_bulkAwaitingResponse = false;
+    ++m_bulkDone;
+    if (m_bulkProg)
+        m_bulkProg->setValue(qMin(m_bulkDone, m_bulkTotal));
+    if (stopAfter || m_bulkDone >= m_bulkTotal) {
+        finishBulkRead();
+        return;
+    }
+    scheduleBulkNext(false);
+}
+
+void ReportCtrlPanel::finishBulkRead()
+{
+    m_bulkActive = false;
+    m_bulkAwaitingResponse = false;
+    m_bulkQueue.clear();
+    m_pendingDsReq.clear();
+    if (m_bulkProg) {
+        disconnect(m_bulkProg, nullptr, this, nullptr);
+        m_bulkProg->close();
+        m_bulkProg->deleteLater();
+        m_bulkProg = nullptr;
+    }
     const RowInfo row = currentRow();
-    if (!row.handlerRef.isEmpty() && m_mms)
-        m_mms->triggerGi(row.handlerRef);
+    if (!row.dsRef.isEmpty())
+        applyCachedValues(row);
 }
 
 void ReportCtrlPanel::fillLowerFromJson(const QJsonObject& evt)
 {
     const QJsonArray members = evt.value(QStringLiteral("rows")).toArray();
-    m_lower->setRowCount(members.size());
+    updateEntryCountForRef(evt.value(QStringLiteral("ref")).toString(), members.size());
+    if (m_lower->rowCount() < members.size())
+        m_lower->setRowCount(members.size());
     for (int i = 0; i < members.size(); ++i) {
         const QJsonObject m = members[i].toObject();
-        m_lower->setItem(i, 0, new QTableWidgetItem(m.value(QStringLiteral("name")).toString()));
-        m_lower->setItem(i, 1, new QTableWidgetItem(m.value(QStringLiteral("name")).toString()));
-        m_lower->setItem(i, 2, new QTableWidgetItem(m.value(QStringLiteral("value")).toString()));
-        m_lower->setItem(i, 3, new QTableWidgetItem(m.value(QStringLiteral("value")).toString()));
+        const QString name = m.value(QStringLiteral("name")).toString();
+        const QString val = jsonValueText(m.value(QStringLiteral("value")));
+        if (!m_lower->item(i, 0) || m_lower->item(i, 0)->text().isEmpty()) {
+            const QString desc = name.section(QLatin1Char('.'), -1).section(QLatin1Char('['), 0, 0);
+            m_lower->setItem(i, 0, new QTableWidgetItem(desc.isEmpty() ? name : desc));
+        }
+        if (!m_lower->item(i, 1) || m_lower->item(i, 1)->text().isEmpty())
+            m_lower->setItem(i, 1, new QTableWidgetItem(name));
+        if (m_lower->item(i, 2))
+            m_lower->item(i, 2)->setText(m_lower->item(i, 3) ? m_lower->item(i, 3)->text() : val);
+        else
+            m_lower->setItem(i, 2, new QTableWidgetItem(val));
+        if (m_lower->item(i, 3))
+            m_lower->item(i, 3)->setText(val);
+        else
+            m_lower->setItem(i, 3, new QTableWidgetItem(val));
     }
 }
 
 void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
 {
     const QString type = evt.value(QStringLiteral("evt")).toString();
-    if (type == QStringLiteral("dataset") && evt.value(QStringLiteral("ref")).toString() == m_pendingDsReq) {
-        fillLowerFromJson(evt);
+    if (type == QStringLiteral("disconnected")) {
+        m_waveListDone = false;
+        if (m_bulkActive)
+            finishBulkRead();
+        return;
+    }
+    if (type == QStringLiteral("dataset")) {
+        const QString ref = evt.value(QStringLiteral("ref")).toString();
+        m_dsCache.insert(ref, evt);
+        updateEntryCountForRef(ref, evt.value(QStringLiteral("rows")).toArray().size());
+        if (m_bulkActive) {
+            if (m_bulkAwaitingResponse && ref == m_pendingDsReq)
+                onBulkStepDone(false);
+            return;
+        }
+        const int rowCount = evt.value(QStringLiteral("rows")).toArray().size();
+        if (ownsDataSetRef(ref) && currentRow().dsRef == ref)
+            emit logLine(tr("召唤完成 %1，共 %2 条").arg(ref).arg(rowCount));
+        if (currentRow().dsRef == ref)
+            fillLowerFromJson(evt);
+        return;
+    }
+    if (type == QStringLiteral("error") && m_bulkActive && m_bulkAwaitingResponse) {
+        const QString msg = evt.value(QStringLiteral("msg")).toString();
+        const bool fatal = msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")
+            || msg == QStringLiteral("CONNECTION_REJECTED");
+        onBulkStepDone(fatal);
         return;
     }
     if (type == QStringLiteral("files") && m_type == ReportPanelType::Wave) {
@@ -202,18 +502,50 @@ void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
     }
     if (type != QStringLiteral("report"))
         return;
+    const QString rcb = evt.value(QStringLiteral("rcb")).toString();
+    bool ownsRcb = false;
+    for (const RowInfo& row : m_rows) {
+        if (row.handlerRef == rcb) {
+            ownsRcb = true;
+            break;
+        }
+    }
+    if (!ownsRcb)
+        return;
     const QJsonArray items = evt.value(QStringLiteral("items")).toArray();
+    m_lower->setUpdatesEnabled(false);
     for (const QJsonValue& v : items) {
         const QJsonObject it = v.toObject();
         const QString name = it.value(QStringLiteral("name")).toString();
-        const QString val = it.value(QStringLiteral("value")).toString();
-        for (int r = 0; r < m_lower->rowCount(); ++r) {
-            if (m_lower->item(r, 0) && m_lower->item(r, 0)->text() == name) {
-                if (m_lower->item(r, 2))
-                    m_lower->item(r, 2)->setText(m_lower->item(r, 3) ? m_lower->item(r, 3)->text() : val);
-                if (m_lower->item(r, 3))
-                    m_lower->item(r, 3)->setText(val);
+        const QString val = jsonValueText(it.value(QStringLiteral("value")));
+        const int idx = it.value(QStringLiteral("idx")).toInt(-1);
+        auto applyVal = [&](int r) {
+            if (r < 0)
+                return;
+            if (r >= m_lower->rowCount())
+                m_lower->setRowCount(r + 1);
+            if (m_lower->item(r, 2))
+                m_lower->item(r, 2)->setText(m_lower->item(r, 3) ? m_lower->item(r, 3)->text() : val);
+            else
+                m_lower->setItem(r, 2, new QTableWidgetItem(val));
+            if (m_lower->item(r, 3))
+                m_lower->item(r, 3)->setText(val);
+            else
+                m_lower->setItem(r, 3, new QTableWidgetItem(val));
+        };
+        bool matched = false;
+        if (!name.isEmpty()) {
+            for (int r = 0; r < m_lower->rowCount(); ++r) {
+                const QTableWidgetItem* addrItem = m_lower->item(r, 1);
+                if (addrItem && addrItem->text() == name) {
+                    applyVal(r);
+                    matched = true;
+                    break;
+                }
             }
         }
+        if (!matched && idx >= 0)
+            applyVal(idx);
     }
+    m_lower->setUpdatesEnabled(true);
 }

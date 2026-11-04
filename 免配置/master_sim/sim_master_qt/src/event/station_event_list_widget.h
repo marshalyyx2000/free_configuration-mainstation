@@ -40,6 +40,7 @@ private:
     QTreeWidget* m_treeRcb = nullptr;
     StationEventModel* m_model = nullptr;
     QVector<StationEvent> m_filtered;
+    QTimer* m_refreshTimer = nullptr;
 };
 
 #endif

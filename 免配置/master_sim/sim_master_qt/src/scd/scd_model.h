@@ -4,6 +4,8 @@
 #include <QString>
 #include <QVector>
 
+class QDomElement;
+
 enum class ReportPanelType {
     Setting,
     RelayEna,
@@ -23,15 +25,25 @@ struct IedDeviceEntry {
     QString wavePath = QStringLiteral("/COMTRADE/");
 };
 
+struct DataSetMember {
+    QString desc;
+    QString address;
+};
+
 struct DataSetEntry {
     QString name;
     QString desc;
+    QString ldInst = QStringLiteral("LD0");
+    QVector<DataSetMember> members;
 };
 
 struct ReportEntry {
     QString name;
     QString desc;
     QString datSet;
+    QString ldInst = QStringLiteral("LD0");
+    QString rptId;
+    int confRev = 0;
     bool buffered = true;
 };
 
@@ -64,9 +76,16 @@ public:
     QVector<RcbDescriptor> allSubscribeRcbs() const;
     static bool datasetMatchesPanel(const QString& dsName, ReportPanelType type);
     static bool reportMatchesPanel(const ReportEntry& rpt, ReportPanelType type);
-    static QString datasetRef(const QString& iedName, const QString& dsName);
-    static QString rcbHandlerRef(const QString& iedName, const QString& rcbName, bool buffered);
-    static QString rcbGetRef(const QString& iedName, const QString& rcbName, const QString& rptno, bool buffered);
+    static QString ldName(const QString& iedName, const QString& ldInst);
+    static QString datasetRef(const QString& iedName, const QString& dsName,
+        const QString& ldInst = QStringLiteral("LD0"));
+    static QString rcbHandlerRef(const QString& iedName, const QString& rcbName, bool buffered,
+        const QString& ldInst = QStringLiteral("LD0"));
+    static QString rcbGetRef(const QString& iedName, const QString& rcbName, const QString& rptno, bool buffered,
+        const QString& ldInst = QStringLiteral("LD0"));
+    static QString fcdaMmsAddress(const QString& iedName, const QDomElement& fcda);
+    static QString mmsItemIdFromAddress(const QString& address);
+    static const DataSetEntry* findDataset(const IedModel* model, const QString& dsName);
 
 private:
     QVector<IedDeviceEntry> m_devices;

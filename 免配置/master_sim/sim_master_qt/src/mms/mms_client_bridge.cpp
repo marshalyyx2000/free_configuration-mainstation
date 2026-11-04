@@ -3,7 +3,15 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
+
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 MmsClientBridge::MmsClientBridge(QObject* parent)
     : QObject(parent)
@@ -32,19 +40,38 @@ void MmsClientBridge::startCli()
         emit logMessage(tr("未找到 mms_master_cli.exe: %1").arg(m_cliPath));
         return;
     }
+    m_cliReady = false;
+    m_connected = false;
+    m_readBuffer.clear();
     m_proc.setProgram(m_cliPath);
     m_proc.setWorkingDirectory(QFileInfo(m_cliPath).absolutePath());
     m_proc.setProcessChannelMode(QProcess::SeparateChannels);
-    connect(&m_proc, &QProcess::readyReadStandardOutput, this, &MmsClientBridge::onReadyRead);
-    connect(&m_proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
-        &MmsClientBridge::onProcessFinished);
+#ifdef Q_OS_WIN
+    m_proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+        args->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        args->startupInfo->wShowWindow = SW_HIDE;
+    });
+#endif
+    if (!m_signalsHooked) {
+        m_signalsHooked = true;
+        connect(&m_proc, &QProcess::readyReadStandardOutput, this, &MmsClientBridge::onReadyRead);
+        connect(&m_proc, &QProcess::readyReadStandardError, this, &MmsClientBridge::onReadyReadStderr);
+        connect(&m_proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+            &MmsClientBridge::onProcessFinished);
+    }
     m_proc.start();
-    if (!m_proc.waitForStarted(5000))
-        emit logMessage(tr("启动 CLI 失败"));
+    if (!m_proc.waitForStarted(5000)) {
+        emit logMessage(tr("启动 CLI 失败: %1").arg(m_proc.errorString()));
+        return;
+    }
+    emit logMessage(tr("已启动 MMS CLI: %1").arg(m_cliPath));
 }
 
 void MmsClientBridge::stopCli()
 {
+    m_pending.clear();
+    m_cliReady = false;
     if (m_proc.state() == QProcess::NotRunning)
         return;
     sendCommand(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("quit") } });
@@ -57,21 +84,41 @@ void MmsClientBridge::stopCli()
 void MmsClientBridge::sendCommand(const QJsonObject& cmd)
 {
     if (m_proc.state() == QProcess::NotRunning) {
-        emit logMessage(tr("CLI 未运行"));
+        emit logMessage(tr("CLI 未运行，无法发送 %1").arg(cmd.value(QStringLiteral("cmd")).toString()));
+        return;
+    }
+    if (!m_cliReady) {
+        m_pending.append(cmd);
         return;
     }
     const QByteArray line = QJsonDocument(cmd).toJson(QJsonDocument::Compact) + '\n';
-    m_proc.write(line);
+    if (m_proc.write(line) < 0) {
+        emit logMessage(tr("向 CLI 写入失败: %1").arg(m_proc.errorString()));
+        return;
+    }
+    m_proc.waitForBytesWritten(3000);
+}
+
+void MmsClientBridge::flushPending()
+{
+    if (!m_cliReady || m_proc.state() == QProcess::NotRunning)
+        return;
+    const QVector<QJsonObject> queued = m_pending;
+    m_pending.clear();
+    for (const QJsonObject& cmd : queued)
+        sendCommand(cmd);
 }
 
 void MmsClientBridge::connectHost(const QString& host, int port)
 {
     startCli();
+    emit logMessage(tr("正在连接 SubStation %1:%2 …").arg(host).arg(port));
     sendCommand(QJsonObject{
         { QStringLiteral("cmd"), QStringLiteral("connect") },
         { QStringLiteral("host"), host },
         { QStringLiteral("port"), port },
     });
+    flushPending();
 }
 
 void MmsClientBridge::disconnectHost()
@@ -80,13 +127,20 @@ void MmsClientBridge::disconnectHost()
     m_connected = false;
 }
 
-void MmsClientBridge::readDataSet(const QString& dsRef, const QString& requestId)
+void MmsClientBridge::readDataSet(const QString& dsRef, const QString& requestId, const QStringList& items)
 {
-    sendCommand(QJsonObject{
+    QJsonObject cmd{
         { QStringLiteral("cmd"), QStringLiteral("read_dataset") },
         { QStringLiteral("ref"), dsRef },
         { QStringLiteral("req_id"), requestId },
-    });
+    };
+    if (!items.isEmpty()) {
+        QJsonArray arr;
+        for (const QString& item : items)
+            arr.append(item);
+        cmd.insert(QStringLiteral("items"), arr);
+    }
+    sendCommand(cmd);
 }
 
 void MmsClientBridge::enableRcb(const QJsonObject& params)
@@ -138,14 +192,29 @@ void MmsClientBridge::onReadyRead()
     }
 }
 
+void MmsClientBridge::onReadyReadStderr()
+{
+    const QByteArray err = m_proc.readAllStandardError().trimmed();
+    if (!err.isEmpty())
+        emit logMessage(QString::fromLocal8Bit(err));
+}
+
 void MmsClientBridge::handleLine(const QByteArray& line)
 {
     QJsonParseError err;
     const QJsonDocument doc = QJsonDocument::fromJson(line, &err);
-    if (err.error != QJsonParseError::NoError || !doc.isObject())
+    if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+        emit logMessage(tr("CLI 非 JSON: %1").arg(QString::fromUtf8(line)));
         return;
+    }
     const QJsonObject obj = doc.object();
     const QString evt = obj.value(QStringLiteral("evt")).toString();
+    if (evt == QStringLiteral("ready")) {
+        m_cliReady = true;
+        flushPending();
+        emit eventReceived(obj);
+        return;
+    }
     if (evt == QStringLiteral("connected"))
         m_connected = true;
     else if (evt == QStringLiteral("disconnected"))
@@ -157,8 +226,9 @@ void MmsClientBridge::handleLine(const QByteArray& line)
 
 void MmsClientBridge::onProcessFinished(int code, QProcess::ExitStatus status)
 {
-    Q_UNUSED(code);
     Q_UNUSED(status);
     m_connected = false;
-    emit logMessage(tr("CLI 已退出"));
+    m_cliReady = false;
+    emit logMessage(tr("CLI 已退出，code=%1").arg(code));
+    emit eventReceived(QJsonObject{ { QStringLiteral("evt"), QStringLiteral("disconnected") } });
 }

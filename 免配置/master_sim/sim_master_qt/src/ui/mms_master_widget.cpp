@@ -5,9 +5,12 @@
 #include "ui/report_ctrl_panel.h"
 #include "util/app_paths.h"
 
+#include <QEventLoop>
 #include <QApplication>
 #include <QDateTime>
+#include <QFile>
 #include <QFileDialog>
+#include <QProcessEnvironment>
 #include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonArray>
@@ -34,6 +37,10 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     tb->addAction(tr("取消全站订阅"), this, &MmsMasterWidget::unsubscribeAllStation);
     tb->addSeparator();
     tb->addAction(tr("打开 SCD/SMCD…"), this, &MmsMasterWidget::openScd);
+    tb->addSeparator();
+    m_linkStatus = new QLabel(tr("未连接"), this);
+    m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+    tb->addWidget(m_linkStatus);
 
     m_iedInfo = new QLabel(tr("未选择装置"), this);
 
@@ -55,8 +62,10 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     rightTabs->addTab(m_eventList, tr("全站事件"));
 
     m_log = new QTextEdit(this);
+    m_log->setObjectName(QStringLiteral("MmsMasterLog"));
     m_log->setReadOnly(true);
-    m_log->setMaximumHeight(120);
+    m_log->setMinimumHeight(90);
+    m_log->setMaximumHeight(180);
 
     auto* split = new QSplitter(this);
     split->addWidget(m_iedTree);
@@ -71,7 +80,7 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     v->addWidget(m_log);
 
     connect(&m_mms, &MmsClientBridge::eventReceived, this, &MmsMasterWidget::onMmsEvent);
-    connect(&m_mms, &MmsClientBridge::logMessage, this, [this](const QString& msg) { m_log->append(msg); });
+    connect(&m_mms, &MmsClientBridge::logMessage, this, [this](const QString& msg) { appendMmsLog(msg); });
     if (m_settings)
         connect(m_settings, &SharedConnectionSettings::settingsChanged, this, &MmsMasterWidget::onSettingsChanged);
 
@@ -99,14 +108,32 @@ void MmsMasterWidget::loadDefaultData()
 {
     m_smcdPath = AppPaths::defaultSmcdPath();
     m_model.loadIedList(AppPaths::iedListPath());
+    if (QFileInfo::exists(m_smcdPath))
+        m_model.loadSmcd(m_smcdPath);
+    else
+        appendMmsLog(tr("未找到 station.SMCD: %1").arg(m_smcdPath));
     m_iedTree->setDevices(m_model.devices());
     if (!m_model.devices().isEmpty())
         m_iedTree->selectIed(m_model.devices().first().iedName);
-    QTimer::singleShot(0, this, [this]() {
-        if (QFileInfo::exists(m_smcdPath))
-            m_model.loadSmcd(m_smcdPath);
-        refreshCurrentIed();
-    });
+    refreshCurrentIed();
+}
+
+void MmsMasterWidget::appendMmsLog(const QString& msg)
+{
+    m_log->append(msg);
+    const QString path = qEnvironmentVariable("SIM_MASTER_TEST_LOG");
+    if (path.isEmpty())
+        return;
+    static QFile file;
+    if (!file.isOpen()) {
+        file.setFileName(path);
+        file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    }
+    if (file.isOpen()) {
+        file.write(msg.toUtf8());
+        file.write("\n");
+        file.flush();
+    }
 }
 
 void MmsMasterWidget::onSettingsChanged()
@@ -129,6 +156,18 @@ void MmsMasterWidget::connectSubstation()
 {
     if (!m_settings)
         return;
+    if (m_mms.connected()) {
+        appendMmsLog(tr("已连接 %1:%2").arg(m_settings->host()).arg(m_settings->mmsPort()));
+        return;
+    }
+    if (!m_mms.available()) {
+        const QString msg = tr("未找到 mms_master_cli.exe\n%1").arg(m_mms.cliPath());
+        appendMmsLog(msg);
+        QMessageBox::warning(this, tr("无法连接"), msg);
+        return;
+    }
+    m_linkStatus->setText(tr("正在连接 %1:%2 …").arg(m_settings->host()).arg(m_settings->mmsPort()));
+    m_linkStatus->setStyleSheet(QStringLiteral("color:#a60; font-weight:bold; padding-left:8px;"));
     m_mms.connectHost(m_settings->host(), m_settings->mmsPort());
 }
 
@@ -137,6 +176,8 @@ void MmsMasterWidget::disconnectSubstation()
     m_mms.disconnectHost();
     m_subscribedHandlers.clear();
     updateSubscribedUi();
+    m_linkStatus->setText(tr("未连接"));
+    m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
 }
 
 MmsMasterWidget::IedPageSet* MmsMasterWidget::pagesFor(const QString& iedName)
@@ -159,32 +200,20 @@ MmsMasterWidget::IedPageSet* MmsMasterWidget::pagesFor(const QString& iedName)
     };
     for (const auto& d : defs) {
         auto* panel = new ReportCtrlPanel(d.type, &m_mms, set.tabs);
+        connect(panel, &ReportCtrlPanel::logLine, this, [this](const QString& msg) { appendMmsLog(msg); });
         connect(panel, &ReportCtrlPanel::subscribeAllForIed, this, [this](const QString& ied) {
-            const IedModel* model = m_model.modelFor(ied);
-            if (!model)
+            if (!m_mms.connected())
                 return;
-            const IedDeviceEntry* dev = nullptr;
-            for (const IedDeviceEntry& e : m_model.devices()) {
-                if (e.iedName == ied) {
-                    dev = &e;
-                    break;
-                }
+            QVector<RcbDescriptor> list;
+            for (const RcbDescriptor& d : m_model.allSubscribeRcbs()) {
+                if (d.iedName == ied)
+                    list.append(d);
             }
-            if (!dev)
+            if (list.isEmpty())
                 return;
-            for (const ReportEntry& rpt : model->reports) {
-                if (!ScdModelLoader::reportMatchesPanel(rpt, ReportPanelType::Din)
-                    && !ScdModelLoader::reportMatchesPanel(rpt, ReportPanelType::RelayEna)
-                    && !ScdModelLoader::reportMatchesPanel(rpt, ReportPanelType::Ain))
-                    continue;
-                const QString handler = ScdModelLoader::rcbHandlerRef(ied, rpt.name, rpt.buffered);
-                m_mms.enableRcb(QJsonObject{
-                    { QStringLiteral("handlerRef"), handler },
-                    { QStringLiteral("rcbGetRef"),
-                        ScdModelLoader::rcbGetRef(ied, rpt.name, dev->rptno, rpt.buffered) },
-                    { QStringLiteral("dsRef"), ScdModelLoader::datasetRef(ied, rpt.datSet) },
-                });
-            }
+            QProgressDialog prog(tr("装置 %1 订阅…").arg(ied), tr("取消"), 0, list.size(), this);
+            prog.setWindowModality(Qt::WindowModal);
+            subscribeRcbDescriptors(list, &prog);
         });
         set.tabs->addTab(panel, QString::fromUtf8(d.title));
         set.panels.append(panel);
@@ -244,6 +273,66 @@ void MmsMasterWidget::updateSubscribedUi()
     }
 }
 
+void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list, QProgressDialog* prog)
+{
+    int okCount = 0;
+    int failCount = 0;
+    for (int i = 0; i < list.size(); ++i) {
+        if (prog) {
+            prog->setValue(i);
+            if (prog->wasCanceled())
+                break;
+        }
+        const RcbDescriptor& d = list[i];
+        if (m_subscribedHandlers.contains(d.handlerRef)) {
+            okCount++;
+            continue;
+        }
+        QString lastErr;
+        QEventLoop loop;
+        QTimer timeout;
+        timeout.setSingleShot(true);
+        timeout.setInterval(12000);
+        const QMetaObject::Connection conn = connect(
+            &m_mms, &MmsClientBridge::eventReceived, &loop,
+            [&](const QJsonObject& evt) {
+                const QString t = evt.value(QStringLiteral("evt")).toString();
+                if (t == QStringLiteral("rcb_enabled")
+                    && evt.value(QStringLiteral("handlerRef")).toString() == d.handlerRef) {
+                    loop.quit();
+                }
+                if (t == QStringLiteral("error")) {
+                    lastErr = evt.value(QStringLiteral("msg")).toString();
+                    loop.quit();
+                }
+            });
+        connect(&timeout, &QTimer::timeout, &loop, &QEventLoop::quit);
+        m_mms.enableRcb(QJsonObject{
+            { QStringLiteral("handlerRef"), d.handlerRef },
+            { QStringLiteral("rcbGetRef"), d.getRef },
+            { QStringLiteral("dsRef"), d.dsRef },
+        });
+        timeout.start();
+        loop.exec();
+        disconnect(conn);
+        QApplication::processEvents();
+
+        if (m_subscribedHandlers.contains(d.handlerRef))
+            okCount++;
+        else
+            failCount++;
+
+        if (lastErr == QStringLiteral("too many active rcbs")) {
+            appendMmsLog(tr("全站订阅已达客户端 RCB 上限，已停止后续订阅"));
+            break;
+        }
+    }
+    if (prog)
+        prog->setValue(list.size());
+    if (list.size() > 1)
+        appendMmsLog(tr("批量订阅：成功 %1，失败 %2").arg(okCount).arg(failCount));
+}
+
 void MmsMasterWidget::subscribeAllStation()
 {
     if (!m_mms.connected()) {
@@ -253,19 +342,7 @@ void MmsMasterWidget::subscribeAllStation()
     const QVector<RcbDescriptor> list = m_model.allSubscribeRcbs();
     QProgressDialog prog(tr("全站订阅…"), tr("取消"), 0, list.size(), this);
     prog.setWindowModality(Qt::WindowModal);
-    for (int i = 0; i < list.size(); ++i) {
-        prog.setValue(i);
-        if (prog.wasCanceled())
-            break;
-        const RcbDescriptor& d = list[i];
-        m_mms.enableRcb(QJsonObject{
-            { QStringLiteral("handlerRef"), d.handlerRef },
-            { QStringLiteral("rcbGetRef"), d.getRef },
-            { QStringLiteral("dsRef"), d.dsRef },
-        });
-        QApplication::processEvents();
-    }
-    prog.setValue(list.size());
+    subscribeRcbDescriptors(list, &prog);
 }
 
 void MmsMasterWidget::unsubscribeAllStation()
@@ -295,6 +372,8 @@ void MmsMasterWidget::appendEventFromReport(const QJsonObject& evt)
         }
     }
     const QJsonArray items = evt.value(QStringLiteral("items")).toArray();
+    QVector<StationEvent> batch;
+    batch.reserve(items.size());
     for (const QJsonValue& v : items) {
         const QJsonObject it = v.toObject();
         const QString name = it.value(QStringLiteral("name")).toString();
@@ -317,9 +396,10 @@ void MmsMasterWidget::appendEventFromReport(const QJsonObject& evt)
         se.oldValue = oldVal;
         se.newValue = val;
         se.reason = it.value(QStringLiteral("reason")).toInt();
-        m_events.append(se);
+        batch.append(se);
     }
-    m_eventList->refreshView();
+    if (!batch.isEmpty())
+        m_events.appendBatch(batch);
 }
 
 void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
@@ -330,6 +410,40 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         if (!handler.isEmpty())
             m_subscribedHandlers.insert(handler);
         updateSubscribedUi();
+        if (!handler.isEmpty())
+            appendMmsLog(tr("报告控制块已启用 %1").arg(handler));
+    }
+    if (type == QStringLiteral("ok")) {
+        const QString cmd = evt.value(QStringLiteral("cmd")).toString();
+        if (cmd == QStringLiteral("gi"))
+            appendMmsLog(tr("总召唤已发送"));
+        else if (cmd == QStringLiteral("disable_rcb"))
+            appendMmsLog(tr("报告控制块已取消订阅"));
+    }
+    if (type == QStringLiteral("files")) {
+        const QString fp = evt.value(QStringLiteral("path")).toString();
+        const int n = evt.value(QStringLiteral("entries")).toArray().size();
+        const QString warn = evt.value(QStringLiteral("warn")).toString();
+        if (warn.isEmpty())
+            appendMmsLog(tr("录波目录 %1，%2 个文件").arg(fp).arg(n));
+        else
+            appendMmsLog(tr("录波目录 %1：无列表 (%2)").arg(fp, warn));
+    }
+    if (type == QStringLiteral("report")) {
+        appendEventFromReport(evt);
+        const QString rcb = evt.value(QStringLiteral("rcb")).toString();
+        QString iedName;
+        for (const IedDeviceEntry& d : m_model.devices()) {
+            if (rcb.startsWith(d.iedName)) {
+                iedName = d.iedName;
+                break;
+            }
+        }
+        if (!iedName.isEmpty() && m_pages.contains(iedName)) {
+            for (ReportCtrlPanel* p : m_pages[iedName].panels)
+                p->handleMmsEvent(evt);
+        }
+        return;
     }
     if (type == QStringLiteral("comm_state")) {
         QHash<QString, bool> st;
@@ -340,8 +454,33 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         m_commState = st;
         m_iedTree->setCommState(st);
     }
-    if (type == QStringLiteral("report"))
-        appendEventFromReport(evt);
+    if (type == QStringLiteral("connected")) {
+        const QString host = evt.value(QStringLiteral("host")).toString();
+        const int port = evt.value(QStringLiteral("port")).toInt();
+        m_linkStatus->setText(tr("已连接 %1:%2").arg(host).arg(port));
+        m_linkStatus->setStyleSheet(QStringLiteral("color:#080; font-weight:bold; padding-left:8px;"));
+        appendMmsLog(tr("SubStation MMS 已连接 %1:%2").arg(host).arg(port));
+        for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
+            for (ReportCtrlPanel* p : it->panels)
+                p->onConnectionReady();
+        }
+    }
+    if (type == QStringLiteral("disconnected")) {
+        m_linkStatus->setText(tr("未连接"));
+        m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+    }
+    if (type == QStringLiteral("error")) {
+        const QString msg = evt.value(QStringLiteral("msg")).toString();
+        if (msg == QStringLiteral("rcb already enabled"))
+            return;
+        if (msg == QStringLiteral("too many active rcbs"))
+            return;
+        appendMmsLog(tr("MMS 错误: %1").arg(msg));
+        if (!m_mms.connected()) {
+            m_linkStatus->setText(tr("连接失败: %1").arg(msg));
+            m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+        }
+    }
 
     for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
         for (ReportCtrlPanel* p : it->panels)
