@@ -1,0 +1,22 @@
+# Nested clones (keep separate)
+免配置/configuration-free/
+免配置/master_sim/third_party/libiec61850/
+
+# Build outputs
+免配置/master_sim/build-win/
+免配置/master_sim/build-cli/
+免配置/master_sim/build-mingw/
+免配置/master_sim/bin/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini
