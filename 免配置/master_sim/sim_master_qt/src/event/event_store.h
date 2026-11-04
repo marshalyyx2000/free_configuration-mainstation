@@ -1,0 +1,42 @@
+#ifndef EVENT_STORE_H
+#define EVENT_STORE_H
+
+#include <QDateTime>
+#include <QMutex>
+#include <QObject>
+#include <QString>
+#include <QVector>
+
+struct StationEvent {
+    QDateTime time;
+    QString iedName;
+    QString iedDesc;
+    QString rcbRef;
+    QString rcbName;
+    QString pointName;
+    QString address;
+    QString oldValue;
+    QString newValue;
+    int reason = 0;
+    QString searchText() const;
+};
+
+Q_DECLARE_METATYPE(StationEvent)
+
+class EventStore : public QObject {
+    Q_OBJECT
+public:
+    explicit EventStore(QObject* parent = nullptr);
+    void append(const StationEvent& ev);
+    QVector<StationEvent> snapshot() const;
+    static constexpr int kMaxEvents = 10000;
+
+signals:
+    void eventAppended();
+
+private:
+    mutable QMutex m_mutex;
+    QVector<StationEvent> m_events;
+};
+
+#endif

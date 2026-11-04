@@ -1,0 +1,29 @@
+#include <winver.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK 0x3fL
+ FILEFLAGS 0x0L
+ FILEOS VOS__WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "master_sim"
+            VALUE "FileDescription", "61850仿真主站"
+            VALUE "FileVersion", "@APP_VERSION_DISPLAY@.0"
+            VALUE "InternalName", "sim_master_qt"
+            VALUE "OriginalFilename", "sim_master_qt.exe"
+            VALUE "ProductName", "61850仿真主站"
+            VALUE "ProductVersion", "@APP_VERSION_DISPLAY@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END

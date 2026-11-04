@@ -1,4 +1,7 @@
 build-win/
 build-cli/
 build-mingw/
+build-qt/
 bin/
+sim_master_qt/build-qt/
+sim_master_qt/dist/

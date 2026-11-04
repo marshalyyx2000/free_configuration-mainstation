@@ -36,6 +36,24 @@ python run_lab.py                 # 下装到 192.168.0.10
 | `build_libiec61850.ps1` | 编译 libiec61850 + CLI |
 | `add_sim_ips.ps1` | 本机添加 10.100.100.x（管理员） |
 
+## Qt6 仿真主站（sim_master_qt）
+
+Windows 原生 **61850仿真主站**（Qt6），连接免配置子站 `192.168.0.10:102`，含装置树、多 Tab 报告、**全站订阅**、**全站事件**（拼音多段搜索）。
+
+**依赖**：VS 2022 Build Tools、CMake、Qt 6.7+（MSVC 套件）、先运行 `build_libiec61850.ps1`。
+
+```powershell
+cd 免配置\master_sim\sim_master_qt
+$env:QT6_DIR = "C:\Qt\6.7.3\msvc2019_64"
+.\build_sim_master.ps1 -Configuration Release
+.\verify_sim_master.ps1
+.\package_sim_master.ps1   # 生成 NSIS 包，成功后 VERSION +0.01
+```
+
+安装包默认输出：`C:\Temp\SimMasterQt_cpack\SimMasterQt-<版本>-win64.exe`（并尝试复制到 `sim_master_qt\dist\`）。
+
+计划文档：[`docs/PLAN_sim_master_qt.md`](docs/PLAN_sim_master_qt.md)、[`docs/PLAN_sim_master_qt_full.md`](docs/PLAN_sim_master_qt_full.md)
+
 ## 61850 主站界面
 
 1. 安装 **CMake 4.x**（已可用：`winget install Kitware.CMake`）与 **Visual Studio 2022 Build Tools**（勾选 **使用 C++ 的桌面开发 / VCTools**）。
