@@ -2,8 +2,10 @@
 #include "util/app_paths.h"
 #include "event/event_store.h"
 #include "ops/config_generator.h"
+#include "ops/lab_operations.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 
 static bool runVerifySelfTest()
@@ -12,6 +14,34 @@ static bool runVerifySelfTest()
     if (!model.loadIedList(AppPaths::iedListPath()))
         return false;
     return model.devices().size() >= 1;
+}
+
+static int runMaintainUploadTest(int argc, char* argv[])
+{
+    QCoreApplication core(argc, argv);
+    QString host = QStringLiteral("192.168.0.10");
+    int port = 2405;
+    QString outDir = AppPaths::outDir();
+    for (int i = 1; i < argc; ++i) {
+        const QString arg = QString::fromLocal8Bit(argv[i]);
+        if (arg == QStringLiteral("--maintain-test") && i + 1 < argc)
+            host = QString::fromLocal8Bit(argv[++i]);
+        else if (arg == QStringLiteral("--maintain-port") && i + 1 < argc)
+            port = QString::fromLocal8Bit(argv[++i]).toInt();
+        else if (arg == QStringLiteral("--out") && i + 1 < argc)
+            outDir = QString::fromLocal8Bit(argv[++i]);
+    }
+    const auto log = [](const QString& msg) {
+        fprintf(stderr, "%s\n", msg.toLocal8Bit().constData());
+    };
+    try {
+        LabOps::runUpload(host, port, outDir, false, 102, log);
+        fprintf(stderr, "maintain-test OK\n");
+        return 0;
+    } catch (const std::exception& ex) {
+        fprintf(stderr, "maintain-test failed: %s\n", ex.what());
+        return 1;
+    }
 }
 
 static int runGenerateConfig(int argc, char* argv[])
@@ -52,6 +82,8 @@ int main(int argc, char* argv[])
         }
         if (arg == QStringLiteral("--generate-config"))
             return runGenerateConfig(argc, argv);
+        if (arg == QStringLiteral("--maintain-test"))
+            return runMaintainUploadTest(argc, argv);
     }
 
     QApplication app(argc, argv);

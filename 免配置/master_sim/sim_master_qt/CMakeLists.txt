@@ -82,6 +82,9 @@ target_include_directories(sim_master_qt PRIVATE
 )
 
 target_link_libraries(sim_master_qt PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network miniz_vendored)
+if(WIN32)
+  target_link_libraries(sim_master_qt PRIVATE ws2_32)
+endif()
 
 install(TARGETS sim_master_qt RUNTIME DESTINATION bin)
 

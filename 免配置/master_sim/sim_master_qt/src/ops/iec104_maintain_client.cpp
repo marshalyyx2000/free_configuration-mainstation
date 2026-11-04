@@ -1,21 +1,161 @@
 #include "ops/iec104_maintain_client.h"
 
 #include <QDateTime>
-#include <QTcpSocket>
+#include <QHostAddress>
 #include <QThread>
 
 #include <stdexcept>
+#include <string>
+#include <string_view>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+using NativeSocket = SOCKET;
+constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
+#else
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netdb.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
+using NativeSocket = int;
+constexpr NativeSocket kInvalidSocket = -1;
+#endif
 
 namespace {
+
 constexpr quint8 P104F_STARTDT_ACT = 0x07;
 constexpr quint8 P104F_STARTDT_CON = 0x0B;
 constexpr quint8 P104F_TESTFR_ACT = 0x43;
 constexpr quint8 P104F_TESTFR_CON = 0x83;
+
+quint8 toU8(char c)
+{
+    return static_cast<quint8>(static_cast<unsigned char>(c));
+}
+
+class SocketInit {
+public:
+    SocketInit()
+    {
+#ifdef _WIN32
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+            throw std::runtime_error("WSAStartup failed");
+#endif
+    }
+    ~SocketInit()
+    {
+#ifdef _WIN32
+        WSACleanup();
+#endif
+    }
+};
+
+SocketInit& socketInitOnce()
+{
+    static SocketInit init;
+    return init;
+}
+
+bool waitReadable(NativeSocket sock, int timeoutMs)
+{
+    if (timeoutMs < 0)
+        timeoutMs = 0;
+    fd_set fds;
+    FD_ZERO(&fds);
+    FD_SET(sock, &fds);
+    timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+#ifdef _WIN32
+    const int rc = select(0, &fds, nullptr, nullptr, &tv);
+#else
+    const int rc = select(sock + 1, &fds, nullptr, nullptr, &tv);
+#endif
+    return rc > 0;
+}
+
+void setTcpNoDelay(NativeSocket sock)
+{
+    int flag = 1;
+    setsockopt(sock, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&flag), sizeof(flag));
+}
+
+void closeNative(NativeSocket sock)
+{
+    if (sock == kInvalidSocket)
+        return;
+#ifdef _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+}
+
+NativeSocket connectTcp(const QString& host, int port, int timeoutMs)
+{
+    Q_UNUSED(timeoutMs);
+    socketInitOnce();
+
+    QHostAddress addr;
+    if (!addr.setAddress(host)) {
+        addrinfo hints{};
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        addrinfo* res = nullptr;
+        const QByteArray hostUtf8 = host.toUtf8();
+        const std::string portStr = std::to_string(port);
+        if (getaddrinfo(hostUtf8.constData(), portStr.c_str(), &hints, &res) != 0 || !res)
+            throw std::runtime_error("resolve host failed");
+        NativeSocket sock = ::socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+        if (sock == kInvalidSocket) {
+            freeaddrinfo(res);
+            throw std::runtime_error("socket create failed");
+        }
+        setTcpNoDelay(sock);
+        const int rc = ::connect(sock, res->ai_addr, static_cast<int>(res->ai_addrlen));
+        freeaddrinfo(res);
+        if (rc != 0)
+            throw std::runtime_error("connect failed");
+        return sock;
+    }
+
+    if (addr.protocol() != QAbstractSocket::IPv4Protocol)
+        throw std::runtime_error("only IPv4 supported");
+
+    NativeSocket sock = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == kInvalidSocket)
+        throw std::runtime_error("socket create failed");
+    setTcpNoDelay(sock);
+
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(static_cast<u_short>(port));
+    sa.sin_addr.s_addr = htonl(addr.toIPv4Address());
+
+    if (::connect(sock, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0) {
+        closeNative(sock);
+        throw std::runtime_error("connect failed");
+    }
+    return sock;
+}
+
 } // namespace
 
 Iec104MaintainClient::Iec104MaintainClient(const Maintain104Config& cfg)
     : m_cfg(cfg)
 {
+}
+
+Iec104MaintainClient::~Iec104MaintainClient()
+{
+    close();
 }
 
 void Iec104MaintainClient::connectToHost(int retries)
@@ -24,10 +164,8 @@ void Iec104MaintainClient::connectToHost(int retries)
     for (int attempt = 0; attempt < retries; ++attempt) {
         try {
             close();
-            m_sock = new QTcpSocket;
-            m_sock->connectToHost(m_cfg.host, static_cast<quint16>(m_cfg.port));
-            if (!m_sock->waitForConnected(m_cfg.timeoutMs))
-                throw std::runtime_error("connect timeout");
+            const NativeSocket sock = connectTcp(m_cfg.host, m_cfg.port, m_cfg.timeoutMs);
+            m_sock = static_cast<intptr_t>(sock);
             m_sendSeq = 0;
             m_recvSeq = 0;
             sendU(P104F_STARTDT_ACT);
@@ -46,37 +184,66 @@ void Iec104MaintainClient::connectToHost(int retries)
 
 void Iec104MaintainClient::close()
 {
-    if (m_sock) {
-        m_sock->close();
-        delete m_sock;
-        m_sock = nullptr;
+    if (m_sock >= 0) {
+        closeNative(static_cast<NativeSocket>(m_sock));
+        m_sock = -1;
+    }
+}
+
+void Iec104MaintainClient::sendAll(const QByteArray& data)
+{
+    if (m_sock < 0)
+        throw std::runtime_error("not connected");
+    const NativeSocket sock = static_cast<NativeSocket>(m_sock);
+    int sent = 0;
+    while (sent < data.size()) {
+        const int chunk = data.size() - sent;
+#ifdef _WIN32
+        const int n = ::send(sock, data.constData() + sent, chunk, 0);
+#else
+        const int n = static_cast<int>(::send(sock, data.constData() + sent, static_cast<size_t>(chunk), 0));
+#endif
+        if (n <= 0)
+            throw std::runtime_error("send failed");
+        sent += n;
     }
 }
 
 void Iec104MaintainClient::sendU(quint8 ctrl1)
 {
     const char frame[] = { char(0x68), char(0x04), char(0x00), char(ctrl1), char(0x00), char(0x00), char(0x00) };
-    m_sock->write(frame, 7);
-    m_sock->waitForBytesWritten(m_cfg.timeoutMs);
+    sendAll(QByteArray(frame, 7));
 }
 
 void Iec104MaintainClient::waitU(quint8 expectedCtrl1)
 {
-    const QByteArray data = recvExact(7);
-    if (data.size() != 7 || uchar(data[0]) != 0x68 || uchar(data[1]) != 0x04 || uchar(data[2]) != 0x00
-        || uchar(data[3]) != expectedCtrl1)
+    const QByteArray data = recvExact(7, m_cfg.timeoutMs);
+    if (data.size() != 7 || toU8(data[0]) != 0x68 || toU8(data[1]) != 0x04 || toU8(data[2]) != 0x00
+        || toU8(data[3]) != expectedCtrl1)
         throw std::runtime_error(QStringLiteral("unexpected U-frame: %1").arg(QString(data.toHex())).toStdString());
 }
 
-QByteArray Iec104MaintainClient::recvExact(int n)
+QByteArray Iec104MaintainClient::recvExact(int n, int timeoutMs)
 {
+    if (m_sock < 0)
+        throw std::runtime_error("not connected");
+    const NativeSocket sock = static_cast<NativeSocket>(m_sock);
     QByteArray buf;
+    buf.reserve(n);
     while (buf.size() < n) {
-        if (!m_sock->waitForReadyRead(m_cfg.timeoutMs))
+        if (!waitReadable(sock, timeoutMs))
+            throw std::runtime_error("timeout");
+        char tmp[8192];
+        const int want = n - buf.size();
+        const int cap = qMin(want, static_cast<int>(sizeof(tmp)));
+#ifdef _WIN32
+        const int r = ::recv(sock, tmp, cap, 0);
+#else
+        const int r = static_cast<int>(::recv(sock, tmp, static_cast<size_t>(cap), 0));
+#endif
+        if (r <= 0)
             throw std::runtime_error("connection closed");
-        buf.append(m_sock->read(n - buf.size()));
-        if (m_sock->state() != QAbstractSocket::ConnectedState && buf.size() < n)
-            throw std::runtime_error("connection closed");
+        buf.append(tmp, r);
     }
     return buf;
 }
@@ -99,27 +266,27 @@ QByteArray Iec104MaintainClient::buildIFrame(const QByteArray& asdu)
     return frame;
 }
 
-std::pair<int, QByteArray> Iec104MaintainClient::readApdu()
+std::pair<int, QByteArray> Iec104MaintainClient::readApdu(int ioTimeoutMs)
 {
-    QByteArray start = recvExact(1);
-    if (uchar(start[0]) != 0x68)
+    QByteArray start = recvExact(1, ioTimeoutMs);
+    if (toU8(start[0]) != 0x68)
         throw std::runtime_error("bad APCI start");
-    QByteArray lenBytes = recvExact(2);
-    const quint16 length = quint8(lenBytes[0]) | (quint16(quint8(lenBytes[1])) << 8);
+    QByteArray lenBytes = recvExact(2, ioTimeoutMs);
+    const quint16 length = toU8(lenBytes[0]) | (quint16(toU8(lenBytes[1])) << 8);
     if (length == 4) {
-        QByteArray rest = recvExact(4);
-        const quint8 c0 = quint8(rest[0]);
+        QByteArray rest = recvExact(4, ioTimeoutMs);
+        const quint8 c0 = toU8(rest[0]);
         if ((c0 & 0x03) == 0x03) {
             if (c0 == P104F_TESTFR_ACT)
                 sendU(P104F_TESTFR_CON);
-            return readApdu();
+            return readApdu(ioTimeoutMs);
         }
         return { 0, QByteArray() };
     }
-    QByteArray body = recvExact(length);
+    QByteArray body = recvExact(length, ioTimeoutMs);
     if (body.size() < 4)
         return { 0, body };
-    const quint16 peerNs = quint8(body[0]) | (quint16(quint8(body[1])) << 8);
+    const quint16 peerNs = toU8(body[0]) | (quint16(toU8(body[1])) << 8);
     m_recvSeq = ((peerNs >> 1) + 1) % 32768;
     return { 1, body.mid(4) };
 }
@@ -156,8 +323,7 @@ void Iec104MaintainClient::sendSAck()
     const quint8 c2 = quint8(((nr & 0x7F) << 1) & 0xFF);
     const quint8 c3 = quint8(((nr & 0x3F80) >> 7) & 0xFF);
     const char frame[] = { char(0x68), char(0x04), char(0x00), char(0x01), char(0x00), char(c2), char(c3) };
-    m_sock->write(frame, 7);
-    m_sock->waitForBytesWritten(3000);
+    sendAll(QByteArray(frame, 7));
 }
 
 QByteArray Iec104MaintainClient::recvUntilAsdu(int expectTyp, int timeoutMs)
@@ -165,19 +331,21 @@ QByteArray Iec104MaintainClient::recvUntilAsdu(int expectTyp, int timeoutMs)
     const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + timeoutMs;
     while (QDateTime::currentMSecsSinceEpoch() < deadline) {
         const int remain = int(deadline - QDateTime::currentMSecsSinceEpoch());
-        m_sock->setReadBufferSize(0);
-        if (!m_sock->waitForReadyRead(qMax(200, remain)))
-            continue;
+        const int ioTimeout = qMax(200, remain);
         try {
-            auto [kind, payload] = readApdu();
-            if (kind == 1 && !payload.isEmpty() && uchar(payload[0]) == expectTyp) {
+            auto [kind, payload] = readApdu(ioTimeout);
+            if (kind == 1 && !payload.isEmpty()) {
+                if (toU8(payload[0]) == expectTyp) {
+                    sendSAck();
+                    return payload;
+                }
                 sendSAck();
-                return payload;
             }
-            if (kind == 1 && !payload.isEmpty())
-                sendSAck();
-        } catch (...) {
-            continue;
+        } catch (const std::runtime_error& e) {
+            const char* msg = e.what();
+            if (msg && std::string_view(msg).find("timeout") != std::string_view::npos)
+                continue;
+            throw;
         }
     }
     throw std::runtime_error(QStringLiteral("等待 ASDU 0x%1 超时").arg(expectTyp, 2, 16, QChar('0')).toStdString());
@@ -188,29 +356,29 @@ void Iec104MaintainClient::drainLink(int timeoutMs)
     const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + timeoutMs;
     while (QDateTime::currentMSecsSinceEpoch() < deadline) {
         const int remain = int(deadline - QDateTime::currentMSecsSinceEpoch());
-        if (!m_sock->waitForReadyRead(qMax(100, remain)))
-            break;
+        const int ioTimeout = qMax(100, remain);
         try {
-            auto [kind, payload] = readApdu();
+            auto [kind, payload] = readApdu(ioTimeout);
             if (kind == 1 && !payload.isEmpty())
                 sendSAck();
-        } catch (...) {
-            break;
+        } catch (const std::runtime_error& e) {
+            const char* msg = e.what();
+            if (msg && std::string_view(msg).find("timeout") != std::string_view::npos)
+                break;
+            throw;
         }
     }
 }
 
 QByteArray Iec104MaintainClient::sendIAndRecvAsdu(const QByteArray& asdu, int expectTyp)
 {
-    m_sock->write(buildIFrame(asdu));
-    m_sock->waitForBytesWritten(m_cfg.timeoutMs);
+    sendAll(buildIFrame(asdu));
     return recvUntilAsdu(expectTyp, m_cfg.timeoutMs);
 }
 
 void Iec104MaintainClient::sendINoReply(const QByteArray& asdu)
 {
-    m_sock->write(buildIFrame(asdu));
-    m_sock->waitForBytesWritten(m_cfg.timeoutMs);
+    sendAll(buildIFrame(asdu));
     drainLink(1500);
 }
 
@@ -231,7 +399,7 @@ void Iec104MaintainClient::downloadFile(const QString& remotePath, const QByteAr
     const int rii = nextRii();
     QByteArray infoAsdu = buildAsdu(0x69, fileInf, fileInfoPayload(remotePath, mesCount), 0x14, 0xFF, rii);
     QByteArray resp = sendIAndRecvAsdu(infoAsdu, 0x6A);
-    if (resp.isEmpty() || uchar(resp[0]) != 0x6A || uchar(resp[2]) != 0x14)
+    if (resp.isEmpty() || toU8(resp[0]) != 0x6A || toU8(resp[2]) != 0x14)
         throw std::runtime_error("file info rejected");
 
     int pos = 0;
@@ -253,9 +421,9 @@ void Iec104MaintainClient::downloadFile(const QString& remotePath, const QByteAr
         const bool needAck = isLast || (framesSinceAck + 1) >= mesCount;
         if (needAck) {
             resp = sendIAndRecvAsdu(contentAsdu, 0x6C);
-            if (resp.isEmpty() || uchar(resp[0]) != 0x6C)
+            if (resp.isEmpty() || toU8(resp[0]) != 0x6C)
                 throw std::runtime_error("file chunk failed");
-            if (uchar(resp[2]) == 0x15)
+            if (toU8(resp[2]) == 0x15)
                 throw std::runtime_error("file chunk denied");
             framesSinceAck = 0;
         } else {
@@ -273,7 +441,7 @@ void Iec104MaintainClient::effect61850()
     payload.append(char(rii));
     QByteArray asdu = buildAsdu(0xCA, 2, payload, 0x14, 0xFF, rii);
     QByteArray resp = sendIAndRecvAsdu(asdu, 0xCB);
-    if (resp.isEmpty() || uchar(resp[0]) != 0xCB || uchar(resp[2]) != 0x14)
+    if (resp.isEmpty() || toU8(resp[0]) != 0xCB || toU8(resp[2]) != 0x14)
         throw std::runtime_error("61850 effect failed");
 }
 

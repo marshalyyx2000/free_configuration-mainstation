@@ -14,6 +14,7 @@ struct Maintain104Config {
 class Iec104MaintainClient {
 public:
     explicit Iec104MaintainClient(const Maintain104Config& cfg);
+    ~Iec104MaintainClient();
 
     void connectToHost(int retries = 3);
     void close();
@@ -26,9 +27,10 @@ public:
 private:
     void sendU(quint8 ctrl1);
     void waitU(quint8 expectedCtrl1);
-    QByteArray recvExact(int n);
+    void sendAll(const QByteArray& data);
+    QByteArray recvExact(int n, int timeoutMs);
     QByteArray buildIFrame(const QByteArray& asdu);
-    std::pair<int, QByteArray> readApdu();
+    std::pair<int, QByteArray> readApdu(int ioTimeoutMs);
     int nextRii();
     QByteArray buildAsdu(int typ, int inf, const QByteArray& payload, int cot = 0x14, int fun = 0xFF,
         int rii = -1);
@@ -40,7 +42,7 @@ private:
     QByteArray fileInfoPayload(const QString& path, int mesCount);
 
     Maintain104Config m_cfg;
-    class QTcpSocket* m_sock = nullptr;
+    intptr_t m_sock = -1;
     int m_sendSeq = 0;
     int m_recvSeq = 0;
     int m_rii = 1;
