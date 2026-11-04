@@ -1,89 +1,44 @@
-#include "ui/mainwindow.h"
+#include "ui/mms_master_widget.h"
 #include "event/station_event_list_widget.h"
+#include "settings/shared_connection_settings.h"
 #include "ui/ied_tree_widget.h"
 #include "ui/report_ctrl_panel.h"
+#include "util/app_paths.h"
 
-#include <QAction>
 #include <QApplication>
-#include <QCoreApplication>
-#include <QDir>
+#include <QDateTime>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHBoxLayout>
 #include <QJsonArray>
 #include <QLabel>
-#include <QMenuBar>
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QSplitter>
 #include <QStackedWidget>
-#include <QStatusBar>
 #include <QTabWidget>
 #include <QTextEdit>
-#include <QToolBar>
 #include <QTimer>
+#include <QToolBar>
 #include <QVBoxLayout>
 
-static QString masterSimRoot()
+MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* parent)
+    : QWidget(parent)
+    , m_settings(settings)
 {
-    QDir d(QCoreApplication::applicationDirPath());
-    for (int i = 0; i < 8; ++i) {
-        if (QFileInfo::exists(d.absoluteFilePath(QStringLiteral("out/IEDList.xml"))))
-            return d.absolutePath();
-        if (QFileInfo::exists(d.absoluteFilePath(QStringLiteral("share/sim_master_qt/IEDList.xml"))))
-            return d.absolutePath();
-        if (!d.cdUp())
-            break;
-    }
-    return QCoreApplication::applicationDirPath();
-}
-
-static QString iedListPath()
-{
-    const QDir root(masterSimRoot());
-    const QString inOut = root.absoluteFilePath(QStringLiteral("out/IEDList.xml"));
-    if (QFileInfo::exists(inOut))
-        return inOut;
-    return root.absoluteFilePath(QStringLiteral("share/sim_master_qt/IEDList.xml"));
-}
-
-static QString defaultSmcdPath()
-{
-    const QDir root(masterSimRoot());
-    const QString inOut = root.absoluteFilePath(QStringLiteral("out/station.SMCD"));
-    if (QFileInfo::exists(inOut))
-        return inOut;
-    const QString share = root.absoluteFilePath(QStringLiteral("share/sim_master_qt/station.SMCD"));
-    if (QFileInfo::exists(share))
-        return share;
-    return root.absoluteFilePath(QStringLiteral("../子站scd/26579.SCD"));
-}
-
-MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent)
-{
-    setWindowTitle(tr("61850仿真主站"));
-    resize(1280, 800);
-
-    auto* fileMenu = menuBar()->addMenu(tr("文件"));
-    fileMenu->addAction(tr("打开 SCD/SMCD…"), this, &MainWindow::openScd);
-    fileMenu->addSeparator();
-    fileMenu->addAction(tr("退出"), qApp, &QApplication::quit);
-
-    auto* helpMenu = menuBar()->addMenu(tr("帮助"));
-    helpMenu->addAction(tr("关于"), this, &MainWindow::showAbout);
-
-    auto* tb = addToolBar(tr("连接"));
-    tb->addAction(tr("连接 SubStation"), this, &MainWindow::connectSubstation);
-    tb->addAction(tr("断开"), this, &MainWindow::disconnectSubstation);
+    auto* tb = new QToolBar(tr("连接"), this);
+    tb->addAction(tr("连接 SubStation"), this, &MmsMasterWidget::connectSubstation);
+    tb->addAction(tr("断开"), this, &MmsMasterWidget::disconnectSubstation);
     tb->addSeparator();
-    tb->addAction(tr("全站订阅"), this, &MainWindow::subscribeAllStation);
-    tb->addAction(tr("取消全站订阅"), this, &MainWindow::unsubscribeAllStation);
+    tb->addAction(tr("全站订阅"), this, &MmsMasterWidget::subscribeAllStation);
+    tb->addAction(tr("取消全站订阅"), this, &MmsMasterWidget::unsubscribeAllStation);
+    tb->addSeparator();
+    tb->addAction(tr("打开 SCD/SMCD…"), this, &MmsMasterWidget::openScd);
 
     m_iedInfo = new QLabel(tr("未选择装置"), this);
-    statusBar()->addPermanentWidget(m_iedInfo, 1);
 
     m_iedTree = new IedTreeWidget(this);
-    connect(m_iedTree, &IedTreeWidget::iedSelected, this, &MainWindow::onIedSelected);
+    connect(m_iedTree, &IedTreeWidget::iedSelected, this, &MmsMasterWidget::onIedSelected);
 
     m_iedStack = new QStackedWidget(this);
     auto* rightTabs = new QTabWidget(this);
@@ -109,31 +64,41 @@ MainWindow::MainWindow(QWidget* parent)
     split->setStretchFactor(0, 1);
     split->setStretchFactor(1, 4);
 
-    auto* central = new QWidget(this);
-    auto* v = new QVBoxLayout(central);
+    auto* v = new QVBoxLayout(this);
+    v->addWidget(tb);
+    v->addWidget(m_iedInfo);
     v->addWidget(split, 1);
     v->addWidget(m_log);
-    setCentralWidget(central);
 
-    connect(&m_mms, &MmsClientBridge::eventReceived, this, &MainWindow::onMmsEvent);
-    connect(&m_mms, &MmsClientBridge::logMessage, this, [this](const QString& msg) {
-        m_log->append(msg);
-    });
+    connect(&m_mms, &MmsClientBridge::eventReceived, this, &MmsMasterWidget::onMmsEvent);
+    connect(&m_mms, &MmsClientBridge::logMessage, this, [this](const QString& msg) { m_log->append(msg); });
+    if (m_settings)
+        connect(m_settings, &SharedConnectionSettings::settingsChanged, this, &MmsMasterWidget::onSettingsChanged);
 
     loadDefaultData();
 }
 
-bool MainWindow::runSelfTest()
+bool MmsMasterWidget::runSelfTest()
 {
     return m_model.devices().size() >= 1;
 }
 
-void MainWindow::loadDefaultData()
+void MmsMasterWidget::reloadModelData()
 {
-    const QString root = masterSimRoot();
-    const QString iedList = iedListPath();
-    m_smcdPath = defaultSmcdPath();
-    m_model.loadIedList(iedList);
+    m_model.loadIedList(AppPaths::iedListPath());
+    m_iedTree->setDevices(m_model.devices());
+    m_smcdPath = AppPaths::defaultSmcdPath();
+    if (QFileInfo::exists(m_smcdPath))
+        m_model.loadSmcd(m_smcdPath);
+    if (!m_model.devices().isEmpty())
+        m_iedTree->selectIed(m_model.devices().first().iedName);
+    refreshCurrentIed();
+}
+
+void MmsMasterWidget::loadDefaultData()
+{
+    m_smcdPath = AppPaths::defaultSmcdPath();
+    m_model.loadIedList(AppPaths::iedListPath());
     m_iedTree->setDevices(m_model.devices());
     if (!m_model.devices().isEmpty())
         m_iedTree->selectIed(m_model.devices().first().iedName);
@@ -144,9 +109,14 @@ void MainWindow::loadDefaultData()
     });
 }
 
-void MainWindow::openScd()
+void MmsMasterWidget::onSettingsChanged()
 {
-    const QString path = QFileDialog::getOpenFileName(this, tr("打开 SCD/SMCD"), masterSimRoot(),
+    Q_UNUSED(m_settings);
+}
+
+void MmsMasterWidget::openScd()
+{
+    const QString path = QFileDialog::getOpenFileName(this, tr("打开 SCD/SMCD"), AppPaths::masterSimRoot(),
         tr("SCD/SMCD (*.scd *.SCD *.smcd *.SMCD);;All (*.*)"));
     if (path.isEmpty())
         return;
@@ -155,19 +125,21 @@ void MainWindow::openScd()
     refreshCurrentIed();
 }
 
-void MainWindow::connectSubstation()
+void MmsMasterWidget::connectSubstation()
 {
-    m_mms.connectHost(QStringLiteral("192.168.0.10"), 102);
+    if (!m_settings)
+        return;
+    m_mms.connectHost(m_settings->host(), m_settings->mmsPort());
 }
 
-void MainWindow::disconnectSubstation()
+void MmsMasterWidget::disconnectSubstation()
 {
     m_mms.disconnectHost();
     m_subscribedHandlers.clear();
     updateSubscribedUi();
 }
 
-MainWindow::IedPageSet* MainWindow::pagesFor(const QString& iedName)
+MmsMasterWidget::IedPageSet* MmsMasterWidget::pagesFor(const QString& iedName)
 {
     if (m_pages.contains(iedName))
         return &m_pages[iedName];
@@ -222,7 +194,7 @@ MainWindow::IedPageSet* MainWindow::pagesFor(const QString& iedName)
     return &m_pages[iedName];
 }
 
-ReportCtrlPanel* MainWindow::panelForIed(const QString& iedName, ReportPanelType type)
+ReportCtrlPanel* MmsMasterWidget::panelForIed(const QString& iedName, ReportPanelType type)
 {
     IedPageSet* set = pagesFor(iedName);
     const struct {
@@ -244,7 +216,7 @@ ReportCtrlPanel* MainWindow::panelForIed(const QString& iedName, ReportPanelType
     return nullptr;
 }
 
-void MainWindow::onIedSelected(const IedDeviceEntry& dev)
+void MmsMasterWidget::onIedSelected(const IedDeviceEntry& dev)
 {
     m_currentDev = dev;
     m_iedInfo->setText(QStringLiteral("%1  IP: %2").arg(dev.iedName, dev.chPara));
@@ -253,7 +225,7 @@ void MainWindow::onIedSelected(const IedDeviceEntry& dev)
     refreshCurrentIed();
 }
 
-void MainWindow::refreshCurrentIed()
+void MmsMasterWidget::refreshCurrentIed()
 {
     if (m_currentDev.iedName.isEmpty())
         return;
@@ -264,7 +236,7 @@ void MainWindow::refreshCurrentIed()
     updateSubscribedUi();
 }
 
-void MainWindow::updateSubscribedUi()
+void MmsMasterWidget::updateSubscribedUi()
 {
     for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
         for (ReportCtrlPanel* p : it->panels)
@@ -272,7 +244,7 @@ void MainWindow::updateSubscribedUi()
     }
 }
 
-void MainWindow::subscribeAllStation()
+void MmsMasterWidget::subscribeAllStation()
 {
     if (!m_mms.connected()) {
         QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
@@ -296,7 +268,7 @@ void MainWindow::subscribeAllStation()
     prog.setValue(list.size());
 }
 
-void MainWindow::unsubscribeAllStation()
+void MmsMasterWidget::unsubscribeAllStation()
 {
     const QSet<QString> handlers = m_subscribedHandlers;
     for (const QString& h : handlers)
@@ -305,7 +277,7 @@ void MainWindow::unsubscribeAllStation()
     updateSubscribedUi();
 }
 
-void MainWindow::appendEventFromReport(const QJsonObject& evt)
+void MmsMasterWidget::appendEventFromReport(const QJsonObject& evt)
 {
     const QString rcbRef = evt.value(QStringLiteral("rcb")).toString();
     QString iedName;
@@ -350,7 +322,7 @@ void MainWindow::appendEventFromReport(const QJsonObject& evt)
     m_eventList->refreshView();
 }
 
-void MainWindow::onMmsEvent(const QJsonObject& evt)
+void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
 {
     const QString type = evt.value(QStringLiteral("evt")).toString();
     if (type == QStringLiteral("rcb_enabled")) {
@@ -375,10 +347,4 @@ void MainWindow::onMmsEvent(const QJsonObject& evt)
         for (ReportCtrlPanel* p : it->panels)
             p->handleMmsEvent(evt);
     }
-}
-
-void MainWindow::showAbout()
-{
-    QMessageBox::about(this, tr("关于"),
-        tr("61850仿真主站 v%1").arg(QStringLiteral(APP_VERSION_DISPLAY)));
 }

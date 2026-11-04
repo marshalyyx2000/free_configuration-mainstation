@@ -1,13 +1,14 @@
-#ifndef MAINWINDOW_H
-#define MAINWINDOW_H
+#ifndef MMS_MASTER_WIDGET_H
+#define MMS_MASTER_WIDGET_H
 
 #include "event/event_store.h"
 #include "mms/mms_client_bridge.h"
 #include "scd/scd_model.h"
 
-#include <QMainWindow>
 #include <QSet>
+#include <QWidget>
 
+class SharedConnectionSettings;
 class IedTreeWidget;
 class StationEventListWidget;
 class ReportCtrlPanel;
@@ -16,11 +17,14 @@ class QTabWidget;
 class QLabel;
 class QTextEdit;
 
-class MainWindow : public QMainWindow {
+class MmsMasterWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = nullptr);
+    explicit MmsMasterWidget(SharedConnectionSettings* settings, QWidget* parent = nullptr);
     bool runSelfTest();
+
+public slots:
+    void reloadModelData();
 
 private slots:
     void openScd();
@@ -30,7 +34,7 @@ private slots:
     void unsubscribeAllStation();
     void onIedSelected(const IedDeviceEntry& dev);
     void onMmsEvent(const QJsonObject& evt);
-    void showAbout();
+    void onSettingsChanged();
 
 private:
     struct IedPageSet {
@@ -45,6 +49,7 @@ private:
     IedPageSet* pagesFor(const QString& iedName);
     ReportCtrlPanel* panelForIed(const QString& iedName, ReportPanelType type);
 
+    SharedConnectionSettings* m_settings = nullptr;
     ScdModelLoader m_model;
     MmsClientBridge m_mms;
     EventStore m_events;

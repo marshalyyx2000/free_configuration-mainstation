@@ -7,10 +7,14 @@
 **图形界面（推荐）**
 
 ```powershell
-cd 免配置\master_sim
-python gui.py
-# 或双击 启动仿真主站界面.bat
+cd 免配置\master_sim\sim_master_qt
+$env:QT6_DIR = "C:\Qt\6.7.3\msvc2019_64"
+.\build_sim_master.ps1 -Configuration Release
+.\build-qt\Release\sim_master_qt.exe
+# 或 .\install_sim_master.ps1 安装到 %LOCALAPPDATA%\Programs\SimMasterQt
 ```
+
+一体化窗口 **「免配置仿真主站」**：Tab **运维/下装**（生成、104 下装、等 102、MMS 检测）+ Tab **61850 主站**（全站订阅/事件）。仍可用 Python 后备：`python gui.py`。
 
 **命令行**
 
@@ -36,9 +40,9 @@ python run_lab.py                 # 下装到 192.168.0.10
 | `build_libiec61850.ps1` | 编译 libiec61850 + CLI |
 | `add_sim_ips.ps1` | 本机添加 10.100.100.x（管理员） |
 
-## Qt6 仿真主站（sim_master_qt）
+## Qt6 免配置仿真主站（sim_master_qt）
 
-Windows 原生 **61850仿真主站**（Qt6），连接免配置子站 `192.168.0.10:102`，含装置树、多 Tab 报告、**全站订阅**、**全站事件**（拼音多段搜索）。
+Windows 原生 **免配置仿真主站**（Qt6）：**运维/下装** + **61850 主站** 同一程序；连接免配置子站 `192.168.0.10`（2405 运维 / 102 MMS），含装置树、多 Tab 报告、**全站订阅**、**全站事件**（拼音多段搜索）。配置生成与 104 下装为 **纯 C++**，不依赖 Python 运行时。
 
 **依赖**：VS 2022 Build Tools、CMake、Qt 6.7+（MSVC 套件）、先运行 `build_libiec61850.ps1`。
 
