@@ -3,6 +3,8 @@
 #include "settings/shared_connection_settings.h"
 #include "ui/ied_tree_widget.h"
 #include "ui/report_ctrl_panel.h"
+#include "event/event_format.h"
+#include "scd/scd_model.h"
 #include "util/app_paths.h"
 
 #include <QEventLoop>
@@ -371,35 +373,82 @@ void MmsMasterWidget::appendEventFromReport(const QJsonObject& evt)
             break;
         }
     }
+    const IedModel* model = m_model.modelFor(iedName);
+    const ReportEntry* rpt = ScdModelLoader::findReportForHandler(model, rcbRef);
+    const DataSetEntry* ds = rpt ? ScdModelLoader::findDataset(model, rpt->datSet, rpt->ldInst) : nullptr;
     const QJsonArray items = evt.value(QStringLiteral("items")).toArray();
     QVector<StationEvent> batch;
     batch.reserve(items.size());
     for (const QJsonValue& v : items) {
         const QJsonObject it = v.toObject();
         const QString name = it.value(QStringLiteral("name")).toString();
-        const QString val = it.value(QStringLiteral("value")).toString();
-        const QString key = iedName + QLatin1Char('|') + name;
+        const int idx = it.value(QStringLiteral("idx")).toInt(-1);
+        QString addr = name;
+        QString desc;
+        if (ds && idx >= 0 && idx < ds->members.size()) {
+            addr = ds->members[idx].address;
+            desc = ds->members[idx].desc;
+        } else if (!name.isEmpty()) {
+            addr = name;
+            desc = name;
+        } else if (idx >= 0) {
+            desc = tr("数据集条目 %1").arg(idx + 1);
+            addr = QStringLiteral("#%1").arg(idx);
+        }
+        const QString val = formatReportValue(it.value(QStringLiteral("value")));
+        const int reason = it.value(QStringLiteral("reason")).toInt();
+        const QString key = iedName + QLatin1Char('|') + addr + QLatin1Char('|') + QString::number(idx);
         const QString oldVal = m_lastValues.value(key);
-        if (oldVal == val && !oldVal.isEmpty())
+        if (oldVal == val && !oldVal.isEmpty() && reason != 16)
             continue;
         m_lastValues.insert(key, val);
         StationEvent se;
         se.time = QDateTime::currentDateTime();
         if (it.contains(QStringLiteral("ts_ms")))
             se.time = QDateTime::fromMSecsSinceEpoch(it.value(QStringLiteral("ts_ms")).toVariant().toLongLong());
+        se.category = reason == 16 ? StationEventCategory::giReport() : StationEventCategory::pointChange();
         se.iedName = iedName;
         se.iedDesc = dev ? dev->desc : iedName;
         se.rcbRef = rcbRef;
         se.rcbName = rcbRef.section(QLatin1Char('$'), -1);
-        se.pointName = name;
-        se.address = name;
+        if (rpt && !rpt->desc.isEmpty())
+            se.rcbName = rpt->desc + QStringLiteral(" (") + se.rcbName + QLatin1Char(')');
+        se.pointName = desc;
+        se.address = addr;
         se.oldValue = oldVal;
         se.newValue = val;
-        se.reason = it.value(QStringLiteral("reason")).toInt();
+        se.reason = reason;
+        se.reasonText = formatReportReason(reason);
         batch.append(se);
     }
     if (!batch.isEmpty())
         m_events.appendBatch(batch);
+}
+
+void MmsMasterWidget::appendRcbControlEvent(const QString& category, const QString& handlerRef,
+    const QString& summary)
+{
+    StationEvent se;
+    se.time = QDateTime::currentDateTime();
+    se.category = category;
+    se.pointName = summary;
+    se.reasonText = category;
+    if (!handlerRef.isEmpty()) {
+        for (const IedDeviceEntry& d : m_model.devices()) {
+            if (handlerRef.startsWith(d.iedName)) {
+                se.iedName = d.iedName;
+                se.iedDesc = d.desc.isEmpty() ? d.iedName : d.desc;
+                break;
+            }
+        }
+        se.rcbRef = handlerRef;
+        se.rcbName = handlerRef.section(QLatin1Char('$'), -1);
+        const IedModel* model = m_model.modelFor(se.iedName);
+        const ReportEntry* rpt = ScdModelLoader::findReportForHandler(model, handlerRef);
+        if (rpt && !rpt->desc.isEmpty())
+            se.rcbName = rpt->desc + QStringLiteral(" (") + se.rcbName + QLatin1Char(')');
+    }
+    m_events.append(se);
 }
 
 void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
@@ -407,18 +456,35 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
     const QString type = evt.value(QStringLiteral("evt")).toString();
     if (type == QStringLiteral("rcb_enabled")) {
         const QString handler = evt.value(QStringLiteral("handlerRef")).toString();
+        const bool wasSub = !handler.isEmpty() && m_subscribedHandlers.contains(handler);
         if (!handler.isEmpty())
             m_subscribedHandlers.insert(handler);
         updateSubscribedUi();
         if (!handler.isEmpty())
             appendMmsLog(tr("报告控制块已启用 %1").arg(handler));
+        if (!handler.isEmpty() && !wasSub) {
+            appendRcbControlEvent(StationEventCategory::rcbSubscribe(), handler,
+                tr("报告控制块已订阅：%1").arg(handler.section(QLatin1Char('$'), -1)));
+        }
     }
     if (type == QStringLiteral("ok")) {
         const QString cmd = evt.value(QStringLiteral("cmd")).toString();
-        if (cmd == QStringLiteral("gi"))
+        const QString handler = evt.value(QStringLiteral("handlerRef")).toString();
+        if (cmd == QStringLiteral("gi")) {
             appendMmsLog(tr("总召唤已发送"));
-        else if (cmd == QStringLiteral("disable_rcb"))
+            if (!handler.isEmpty()) {
+                appendRcbControlEvent(StationEventCategory::rcbGi(), handler,
+                    tr("已向报告控制块发出总召唤：%1").arg(handler.section(QLatin1Char('$'), -1)));
+            }
+        } else if (cmd == QStringLiteral("disable_rcb")) {
             appendMmsLog(tr("报告控制块已取消订阅"));
+            if (!handler.isEmpty()) {
+                m_subscribedHandlers.remove(handler);
+                updateSubscribedUi();
+                appendRcbControlEvent(StationEventCategory::rcbUnsubscribe(), handler,
+                    tr("报告控制块已取消订阅：%1").arg(handler.section(QLatin1Char('$'), -1)));
+            }
+        }
     }
     if (type == QStringLiteral("files")) {
         const QString fp = evt.value(QStringLiteral("path")).toString();
@@ -460,6 +526,8 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         m_linkStatus->setText(tr("已连接 %1:%2").arg(host).arg(port));
         m_linkStatus->setStyleSheet(QStringLiteral("color:#080; font-weight:bold; padding-left:8px;"));
         appendMmsLog(tr("SubStation MMS 已连接 %1:%2").arg(host).arg(port));
+        appendRcbControlEvent(StationEventCategory::linkUp(), QString(),
+            tr("已连接 SubStation %1:%2").arg(host).arg(port));
         for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
             for (ReportCtrlPanel* p : it->panels)
                 p->onConnectionReady();
@@ -468,6 +536,7 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
     if (type == QStringLiteral("disconnected")) {
         m_linkStatus->setText(tr("未连接"));
         m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+        appendRcbControlEvent(StationEventCategory::linkDown(), QString(), tr("已断开 SubStation 连接"));
     }
     if (type == QStringLiteral("error")) {
         const QString msg = evt.value(QStringLiteral("msg")).toString();

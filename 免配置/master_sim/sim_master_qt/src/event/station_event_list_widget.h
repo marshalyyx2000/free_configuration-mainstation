@@ -7,6 +7,8 @@
 #include <QWidget>
 
 class QComboBox;
+class QPlainTextEdit;
+class QTimer;
 class QLineEdit;
 class QStackedWidget;
 class QTableView;
@@ -29,6 +31,7 @@ private slots:
 
 private:
     void rebuildFiltered();
+    void updateDetailFromTree(QTreeWidget* tree);
     enum ViewMode { Flat, ByIed, ByRcb };
 
     EventStore* m_store = nullptr;
@@ -40,6 +43,7 @@ private:
     QTreeWidget* m_treeRcb = nullptr;
     StationEventModel* m_model = nullptr;
     QVector<StationEvent> m_filtered;
+    QPlainTextEdit* m_detail = nullptr;
     QTimer* m_refreshTimer = nullptr;
 };
 

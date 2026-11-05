@@ -48,6 +48,7 @@ private:
     void updateSubscribedUi();
     void appendEventFromReport(const QJsonObject& evt);
     void appendMmsLog(const QString& msg);
+    void appendRcbControlEvent(const QString& category, const QString& handlerRef, const QString& summary);
     void subscribeRcbDescriptors(const QVector<RcbDescriptor>& list, QProgressDialog* prog);
     IedPageSet* pagesFor(const QString& iedName);
     ReportCtrlPanel* panelForIed(const QString& iedName, ReportPanelType type);

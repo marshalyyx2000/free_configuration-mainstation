@@ -54,11 +54,19 @@ static void emit_error(const char* msg) {
     fflush(stdout);
 }
 
-static void emit_ok(const char* cmd) {
+static void emit_ok_ref(const char* cmd, const char* handlerRef) {
     printf("{\"evt\":\"ok\",\"cmd\":");
     json_escape_print(stdout, cmd);
+    if (handlerRef && handlerRef[0]) {
+        printf(",\"handlerRef\":");
+        json_escape_print(stdout, handlerRef);
+    }
     printf("}\n");
     fflush(stdout);
+}
+
+static void emit_ok(const char* cmd) {
+    emit_ok_ref(cmd, NULL);
 }
 
 static const char* json_str(const char* line, const char* key, char* buf, size_t bufsz) {
@@ -774,7 +782,7 @@ static void cmd_disable_rcb(const char* line) {
         IedConnection_setRCBValues(g_con, &err, slot->rcb, RCB_ELEMENT_RPT_ENA, true);
     }
     free_rcb_slot(slot);
-    emit_ok("disable_rcb");
+    emit_ok_ref("disable_rcb", handlerRef);
 }
 
 static void cmd_gi(const char* line) {
@@ -792,7 +800,7 @@ static void cmd_gi(const char* line) {
         emit_error(ied_error_message(err));
         return;
     }
-    emit_ok("gi");
+    emit_ok_ref("gi", handlerRef);
 }
 
 static void emit_files_json(const char* path, LinkedList list, const char* warn) {

@@ -278,15 +278,37 @@ QString ScdModelLoader::mmsItemIdFromAddress(const QString& address)
     return ln + QLatin1Char('$') + fc + QLatin1Char('$') + doPath;
 }
 
-const DataSetEntry* ScdModelLoader::findDataset(const IedModel* model, const QString& dsName)
+const DataSetEntry* ScdModelLoader::findDataset(const IedModel* model, const QString& dsName, const QString& ldInst)
 {
     if (!model)
         return nullptr;
+    for (const DataSetEntry& ds : model->datasets) {
+        if (ds.name == dsName && ds.ldInst == ldInst)
+            return &ds;
+    }
     for (const DataSetEntry& ds : model->datasets) {
         if (ds.name == dsName)
             return &ds;
     }
     return nullptr;
+}
+
+const ReportEntry* ScdModelLoader::findReportForHandler(const IedModel* model, const QString& handlerRef)
+{
+    if (!model || handlerRef.isEmpty())
+        return nullptr;
+    const QString rcbName = handlerRef.section(QLatin1Char('$'), -1);
+    const ReportEntry* fallback = nullptr;
+    for (const ReportEntry& r : model->reports) {
+        if (r.name != rcbName)
+            continue;
+        if (!fallback)
+            fallback = &r;
+        const QString ldPrefix = ldName(model->iedName, r.ldInst) + QStringLiteral("/LLN0$");
+        if (handlerRef.startsWith(ldPrefix))
+            return &r;
+    }
+    return fallback;
 }
 
 bool ScdModelLoader::datasetMatchesPanel(const QString& dsName, ReportPanelType type)

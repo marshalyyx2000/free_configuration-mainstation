@@ -85,7 +85,9 @@ public:
         const QString& ldInst = QStringLiteral("LD0"));
     static QString fcdaMmsAddress(const QString& iedName, const QDomElement& fcda);
     static QString mmsItemIdFromAddress(const QString& address);
-    static const DataSetEntry* findDataset(const IedModel* model, const QString& dsName);
+    static const ReportEntry* findReportForHandler(const IedModel* model, const QString& handlerRef);
+    static const DataSetEntry* findDataset(const IedModel* model, const QString& dsName,
+        const QString& ldInst = QStringLiteral("LD0"));
 
 private:
     QVector<IedDeviceEntry> m_devices;

@@ -1,10 +1,17 @@
 #include "event/event_store.h"
+#include "event/event_format.h"
 
 #include <QMutexLocker>
 
 QString StationEvent::searchText() const
 {
-    return QStringLiteral("%1 %2 %3 %4 %5 %6").arg(iedName, iedDesc, rcbName, rcbRef, pointName, address);
+    return QStringLiteral("%1 %2 %3 %4 %5 %6 %7 %8 %9")
+        .arg(category, iedName, iedDesc, rcbName, rcbRef, pointName, address, newValue, reasonText);
+}
+
+QString StationEvent::detailText() const
+{
+    return stationEventDetailText(*this);
 }
 
 EventStore::EventStore(QObject* parent)

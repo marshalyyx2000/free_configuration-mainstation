@@ -9,6 +9,8 @@
 
 struct StationEvent {
     QDateTime time;
+    /** 变位 / 订阅 / 总召唤 / 取消订阅 / 总召唤上送 / 连接 / 断开 等 */
+    QString category;
     QString iedName;
     QString iedDesc;
     QString rcbRef;
@@ -18,7 +20,9 @@ struct StationEvent {
     QString oldValue;
     QString newValue;
     int reason = 0;
+    QString reasonText;
     QString searchText() const;
+    QString detailText() const;
 };
 
 Q_DECLARE_METATYPE(StationEvent)
