@@ -1,0 +1,42 @@
+--- a/src/iec61850/client/client_report.c
++++ b/src/iec61850/client/client_report.c
+@@ -644,10 +644,35 @@
+     }
+     else {
+         if (dataSetSize != matchingReport->dataSetSize) {
+-            if (DEBUG_IED_CLIENT)
+-                printf("IED_CLIENT: received malformed report (inclusion has no plausible size)\n");
+-
+-            goto exit_function;
++            /*
++             * Some servers reuse one RptID for all RCBs of an IED (for example
++             * the configuration-free substation rewrites rptID="NULL" to
++             * "<IED>NULL"). The client then dispatches every report of that IED
++             * to the first installed report handler. A report for another data
++             * set has a different inclusion size - do not drop it here. Reset
++             * the cached data set state so the callback can dispatch the report
++             * by its DatSet name.
++             */
++            if (DEBUG_IED_CLIENT)
++                printf("IED_CLIENT: report data set size changed from %i to %i\n",
++                        matchingReport->dataSetSize, dataSetSize);
++
++            if (matchingReport->dataSetValues != NULL) {
++                MmsValue_delete(matchingReport->dataSetValues);
++                matchingReport->dataSetValues = NULL;
++            }
++
++            if (matchingReport->dataReferences != NULL) {
++                MmsValue_delete(matchingReport->dataReferences);
++                matchingReport->dataReferences = NULL;
++            }
++
++            if (matchingReport->reasonForInclusion != NULL) {
++                GLOBAL_FREEMEM(matchingReport->reasonForInclusion);
++                matchingReport->reasonForInclusion = NULL;
++            }
++
++            matchingReport->dataSetSize = dataSetSize;
+         }
+     }
+ 

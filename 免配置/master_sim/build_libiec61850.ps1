@@ -6,6 +6,11 @@ $LibBuild = Join-Path $Root "build-win"
 $CliBuild = Join-Path $Root "build-cli"
 $Bin = Join-Path $Root "bin"
 
+$ClientReportSrc = Join-Path $LibSrc "src\iec61850\client\client_report.c"
+if ((Test-Path $ClientReportSrc) -and -not (Select-String -Path $ClientReportSrc -SimpleMatch "report data set size changed" -Quiet)) {
+    Write-Warning "libiec61850 patch not applied: reports that reuse one RptID across data sets will be dropped. Apply native\patches\libiec61850-report-dataset-size.patch first."
+}
+
 function Resolve-Cmake {
     $candidates = @(
         (Join-Path ${env:ProgramFiles} "CMake\bin\cmake.exe"),

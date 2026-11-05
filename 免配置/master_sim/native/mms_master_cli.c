@@ -30,6 +30,7 @@ typedef struct {
     ClientReportControlBlock rcb;
     ClientDataSet clientDataSet;
     LinkedList dataSetDirectory;
+    MmsValue* prevDsValues;
 } ActiveRcb;
 
 static ActiveRcb g_rcbs[MAX_RCB];
@@ -406,14 +407,66 @@ static ActiveRcb* find_rcb_by_handler(const char* handlerRef) {
     return NULL;
 }
 
+static bool report_item_value_changed(MmsValue* cur, MmsValue* prev) {
+    if (!cur) {
+        return false;
+    }
+    if (!prev) {
+        return true;
+    }
+    bool a = false;
+    bool b = false;
+    if (comm_stval_from_item(cur, &a) && comm_stval_from_item(prev, &b)) {
+        return a != b;
+    }
+    char bufA[512];
+    char bufB[512];
+    bufA[0] = 0;
+    bufB[0] = 0;
+    MmsValue_printToBuffer(cur, bufA, (int)sizeof(bufA));
+    MmsValue_printToBuffer(prev, bufB, (int)sizeof(bufB));
+    return strcmp(bufA, bufB) != 0;
+}
+
+static void snapshot_report_values(ActiveRcb* slot, MmsValue* dataSetValues) {
+    if (!slot || !dataSetValues) {
+        return;
+    }
+    if (slot->prevDsValues) {
+        MmsValue_delete(slot->prevDsValues);
+        slot->prevDsValues = NULL;
+    }
+    slot->prevDsValues = MmsValue_clone(dataSetValues);
+}
+
 static void reportCallback(void* parameter, ClientReport report) {
     ActiveRcb* slot = (ActiveRcb*)parameter;
     if (!slot || !report) {
         return;
     }
 
+    /*
+     * A server may reuse one RptID for several RCBs (the configuration-free
+     * substation rewrites rptID="NULL" to "<IED>NULL"). libiec61850 then
+     * dispatches the report to the first handler installed for that RptID.
+     * Re-dispatch by the report's DatSet so values, previous snapshot and
+     * RCB reference belong to the data set that actually changed.
+     */
+    ActiveRcb* target = slot;
+    const char* dataSetName = ClientReport_hasDataSetName(report)
+        ? ClientReport_getDataSetName(report) : NULL;
+    if (dataSetName && dataSetName[0]) {
+        for (int i = 0; i < MAX_RCB; i++) {
+            if (g_rcbs[i].used && g_rcbs[i].dsRef[0]
+                && strcmp(g_rcbs[i].dsRef, dataSetName) == 0) {
+                target = &g_rcbs[i];
+                break;
+            }
+        }
+    }
+
     MmsValue* dataSetValues = ClientReport_getDataSetValues(report);
-    const char* rcbRef = ClientReport_getRcbReference(report);
+    const char* rcbRef = target->rcbGetRef[0] ? target->rcbGetRef : slot->rcbGetRef;
 
     printf("{\"evt\":\"report\",\"rcb\":");
     json_escape_print(stdout, rcbRef ? rcbRef : "");
@@ -422,16 +475,29 @@ static void reportCallback(void* parameter, ClientReport report) {
     int n = dataSetValues ? MmsValue_getArraySize(dataSetValues) : 0;
     for (int i = 0; i < n; i++) {
         ReasonForInclusion reason = ClientReport_getReasonForInclusion(report, i);
+        MmsValue* curVal = dataSetValues ? MmsValue_getElement(dataSetValues, i) : NULL;
+        MmsValue* prevVal = (target->prevDsValues && dataSetValues) ? MmsValue_getElement(target->prevDsValues, i) : NULL;
         if (reason == IEC61850_REASON_NOT_INCLUDED) {
-            continue;
+            /* Vendor 突发性 (e.g. reason code 0x40) may not map to IEC61850_REASON_DATA_CHANGE in the stack. */
+            if (curVal && report_item_value_changed(curVal, prevVal)) {
+                reason = IEC61850_REASON_DATA_CHANGE;
+            } else {
+                continue;
+            }
         }
         if (!first) {
             printf(",");
         }
         first = 0;
         const char* name = "";
-        if (slot->dataSetDirectory) {
-            LinkedList entry = LinkedList_get(slot->dataSetDirectory, i);
+        if (ClientReport_hasDataReference(report)) {
+            const char* dr = ClientReport_getDataReference(report, i);
+            if (dr && dr[0]) {
+                name = dr;
+            }
+        }
+        if (name[0] == 0 && target->dataSetDirectory) {
+            LinkedList entry = LinkedList_get(target->dataSetDirectory, i);
             if (entry && entry->data) {
                 name = (const char*)entry->data;
             }
@@ -447,6 +513,7 @@ static void reportCallback(void* parameter, ClientReport report) {
     }
     printf("]}\n");
     fflush(stdout);
+    snapshot_report_values(target, dataSetValues);
 }
 
 static void free_rcb_slot(ActiveRcb* slot) {
@@ -454,7 +521,7 @@ static void free_rcb_slot(ActiveRcb* slot) {
         return;
     }
     if (g_con) {
-        IedConnection_uninstallReportHandler(g_con, slot->handlerRef);
+        IedConnection_uninstallReportHandler(g_con, slot->rcbGetRef[0] ? slot->rcbGetRef : slot->handlerRef);
     }
     if (slot->rcb) {
         ClientReportControlBlock_destroy(slot->rcb);
@@ -463,6 +530,10 @@ static void free_rcb_slot(ActiveRcb* slot) {
     if (slot->clientDataSet) {
         ClientDataSet_destroy(slot->clientDataSet);
         slot->clientDataSet = NULL;
+    }
+    if (slot->prevDsValues) {
+        MmsValue_delete(slot->prevDsValues);
+        slot->prevDsValues = NULL;
     }
     if (slot->dataSetDirectory) {
         LinkedList_destroy(slot->dataSetDirectory);
@@ -736,6 +807,22 @@ static void cmd_enable_rcb(const char* line) {
     if (!ClientReportControlBlock_isBuffered(slot->rcb)) {
         ClientReportControlBlock_setResv(slot->rcb, true);
     }
+
+    slot->clientDataSet = IedConnection_readDataSetValues(g_con, &err, dsRef, NULL);
+    if (err != IED_ERROR_OK || !slot->clientDataSet) {
+        free_rcb_slot(slot);
+        emit_error(ied_error_message(err));
+        return;
+    }
+    slot->dataSetDirectory = IedConnection_getDataSetDirectory(g_con, &err, dsRef, NULL);
+
+    if (slot->clientDataSet) {
+        MmsValue* seed = ClientDataSet_getValues(slot->clientDataSet);
+        if (seed) {
+            snapshot_report_values(slot, seed);
+        }
+    }
+
     ClientReportControlBlock_setTrgOps(
         slot->rcb, TRG_OPT_DATA_CHANGED | TRG_OPT_QUALITY_CHANGED | TRG_OPT_GI);
     ClientReportControlBlock_setDataSetReference(slot->rcb, dsRef);
@@ -743,7 +830,7 @@ static void cmd_enable_rcb(const char* line) {
     ClientReportControlBlock_setGI(slot->rcb, true);
 
     IedConnection_installReportHandler(
-        g_con, handlerRef, ClientReportControlBlock_getRptId(slot->rcb), reportCallback, slot);
+        g_con, slot->rcbGetRef, ClientReportControlBlock_getRptId(slot->rcb), reportCallback, slot);
 
     uint32_t mask = RCB_ELEMENT_DATSET | RCB_ELEMENT_TRG_OPS | RCB_ELEMENT_RPT_ENA | RCB_ELEMENT_GI;
     if (!ClientReportControlBlock_isBuffered(slot->rcb)) {
