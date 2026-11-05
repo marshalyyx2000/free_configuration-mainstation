@@ -73,6 +73,8 @@ public:
     bool loadSmcd(const QString& path);
     const QVector<IedDeviceEntry>& devices() const { return m_devices; }
     const IedModel* modelFor(const QString& iedName) const;
+    /** Longest IEDList ied_name prefix matching MMS ref (e.g. E1Q1SB41PROT/... → E1Q1SB41). */
+    QString resolveIedFromMmsRef(const QString& mmsRef) const;
     QVector<RcbDescriptor> allSubscribeRcbs() const;
     static bool datasetMatchesPanel(const QString& dsName, ReportPanelType type);
     static bool reportMatchesPanel(const ReportEntry& rpt, ReportPanelType type);
@@ -85,6 +87,10 @@ public:
         const QString& ldInst = QStringLiteral("LD0"));
     static QString fcdaMmsAddress(const QString& iedName, const QDomElement& fcda);
     static QString mmsItemIdFromAddress(const QString& address);
+    /** MMS report evt "rcb" (typically rcbGetRef) vs SCD handler / get references. */
+    static bool rcbReportRefMatches(const QString& reportRcb, const QString& handlerRef, const QString& getRef);
+    /** SCD FCDA address (LD/LN.DO[FC]) vs MMS data reference in reports. */
+    static bool addressMatchesMmsDataRef(const QString& scdAddress, const QString& mmsDataRef);
     static const ReportEntry* findReportForHandler(const IedModel* model, const QString& handlerRef);
     static const DataSetEntry* findDataset(const IedModel* model, const QString& dsName,
         const QString& ldInst = QStringLiteral("LD0"));

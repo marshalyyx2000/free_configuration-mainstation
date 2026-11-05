@@ -503,14 +503,9 @@ void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
     if (type != QStringLiteral("report"))
         return;
     const QString rcb = evt.value(QStringLiteral("rcb")).toString();
-    bool ownsRcb = false;
-    for (const RowInfo& row : m_rows) {
-        if (row.handlerRef == rcb) {
-            ownsRcb = true;
-            break;
-        }
-    }
-    if (!ownsRcb)
+    const RowInfo sel = currentRow();
+    if (sel.handlerRef.isEmpty()
+        || !ScdModelLoader::rcbReportRefMatches(rcb, sel.handlerRef, sel.getRef))
         return;
     const QJsonArray items = evt.value(QStringLiteral("items")).toArray();
     m_lower->setUpdatesEnabled(false);
@@ -537,7 +532,7 @@ void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
         if (!name.isEmpty()) {
             for (int r = 0; r < m_lower->rowCount(); ++r) {
                 const QTableWidgetItem* addrItem = m_lower->item(r, 1);
-                if (addrItem && addrItem->text() == name) {
+                if (addrItem && ScdModelLoader::addressMatchesMmsDataRef(addrItem->text(), name)) {
                     applyVal(r);
                     matched = true;
                     break;

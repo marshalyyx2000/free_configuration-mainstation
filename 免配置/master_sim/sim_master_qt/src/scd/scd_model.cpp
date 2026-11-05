@@ -211,6 +211,53 @@ const IedModel* ScdModelLoader::modelFor(const QString& iedName) const
     return nullptr;
 }
 
+QString ScdModelLoader::resolveIedFromMmsRef(const QString& mmsRef) const
+{
+    const QString ldPart = mmsRef.section(QLatin1Char('/'), 0, 0);
+    if (ldPart.isEmpty())
+        return {};
+    QString best;
+    int bestLen = 0;
+    for (const IedDeviceEntry& d : m_devices) {
+        if (d.iedName.isEmpty() || !ldPart.startsWith(d.iedName))
+            continue;
+        if (d.iedName.length() > bestLen) {
+            bestLen = d.iedName.length();
+            best = d.iedName;
+        }
+    }
+    return best;
+}
+
+static bool rcbHandlerTokenMatches(const QString& handlerToken, const QString& reportName)
+{
+    if (handlerToken == reportName)
+        return true;
+    if (handlerToken.startsWith(reportName) && handlerToken.length() > reportName.length()) {
+        const QChar next = handlerToken.at(reportName.length());
+        return next.isDigit();
+    }
+    return false;
+}
+
+const ReportEntry* ScdModelLoader::findReportForHandler(const IedModel* model, const QString& handlerRef)
+{
+    if (!model || handlerRef.isEmpty())
+        return nullptr;
+    const QString rcbToken = handlerRef.section(QLatin1Char('$'), -1);
+    const ReportEntry* fallback = nullptr;
+    for (const ReportEntry& r : model->reports) {
+        if (!rcbHandlerTokenMatches(rcbToken, r.name))
+            continue;
+        if (!fallback)
+            fallback = &r;
+        const QString ldPrefix = ldName(model->iedName, r.ldInst) + QStringLiteral("/LLN0$");
+        if (handlerRef.startsWith(ldPrefix))
+            return &r;
+    }
+    return fallback;
+}
+
 QString ScdModelLoader::ldName(const QString& iedName, const QString& ldInst)
 {
     const QString inst = ldInst.isEmpty() ? QStringLiteral("LD0") : ldInst;
@@ -278,6 +325,41 @@ QString ScdModelLoader::mmsItemIdFromAddress(const QString& address)
     return ln + QLatin1Char('$') + fc + QLatin1Char('$') + doPath;
 }
 
+bool ScdModelLoader::rcbReportRefMatches(const QString& reportRcb, const QString& handlerRef, const QString& getRef)
+{
+    if (reportRcb.isEmpty())
+        return false;
+    if (reportRcb == handlerRef || (!getRef.isEmpty() && reportRcb == getRef))
+        return true;
+    const QString reportTok = reportRcb.section(QLatin1Char('$'), -1);
+    const QString handlerTok = handlerRef.section(QLatin1Char('$'), -1);
+    if (!handlerTok.isEmpty() && rcbHandlerTokenMatches(reportTok, handlerTok))
+        return true;
+    const QString getTok = getRef.section(QLatin1Char('$'), -1);
+    if (!getTok.isEmpty() && (reportTok == getTok || rcbHandlerTokenMatches(reportTok, getTok)))
+        return true;
+    return false;
+}
+
+bool ScdModelLoader::addressMatchesMmsDataRef(const QString& scdAddress, const QString& mmsDataRef)
+{
+    if (scdAddress.isEmpty() || mmsDataRef.isEmpty())
+        return false;
+    if (scdAddress == mmsDataRef)
+        return true;
+    const QString itemId = mmsItemIdFromAddress(scdAddress);
+    QString mmsRest = mmsDataRef;
+    const int slash = mmsRest.indexOf(QLatin1Char('/'));
+    if (slash >= 0)
+        mmsRest = mmsRest.mid(slash + 1);
+    if (itemId == mmsRest)
+        return true;
+    const QString ldPart = scdAddress.section(QLatin1Char('/'), 0, 0);
+    if (!ldPart.isEmpty() && mmsDataRef == ldPart + QLatin1Char('/') + itemId)
+        return true;
+    return false;
+}
+
 const DataSetEntry* ScdModelLoader::findDataset(const IedModel* model, const QString& dsName, const QString& ldInst)
 {
     if (!model)
@@ -291,24 +373,6 @@ const DataSetEntry* ScdModelLoader::findDataset(const IedModel* model, const QSt
             return &ds;
     }
     return nullptr;
-}
-
-const ReportEntry* ScdModelLoader::findReportForHandler(const IedModel* model, const QString& handlerRef)
-{
-    if (!model || handlerRef.isEmpty())
-        return nullptr;
-    const QString rcbName = handlerRef.section(QLatin1Char('$'), -1);
-    const ReportEntry* fallback = nullptr;
-    for (const ReportEntry& r : model->reports) {
-        if (r.name != rcbName)
-            continue;
-        if (!fallback)
-            fallback = &r;
-        const QString ldPrefix = ldName(model->iedName, r.ldInst) + QStringLiteral("/LLN0$");
-        if (handlerRef.startsWith(ldPrefix))
-            return &r;
-    }
-    return fallback;
 }
 
 bool ScdModelLoader::datasetMatchesPanel(const QString& dsName, ReportPanelType type)

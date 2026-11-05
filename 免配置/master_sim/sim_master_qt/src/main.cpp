@@ -1,6 +1,7 @@
 #include "scd/scd_model.h"
 #include "util/app_paths.h"
 #include "event/event_store.h"
+#include "event/report_event_logic.h"
 #include "ops/config_generator.h"
 #include "ops/lab_operations.h"
 
@@ -10,10 +11,26 @@
 
 static bool runVerifySelfTest()
 {
+    if (!ScdModelLoader::rcbReportRefMatches(QStringLiteral("E1Q1SB48PROT/LLN0$BR$brcbRelayEna09"),
+            QStringLiteral("E1Q1SB48PROT/LLN0$BR$brcbRelayEna"),
+            QStringLiteral("E1Q1SB48PROT/LLN0$BR$brcbRelayEna09")))
+        return false;
+    if (!ScdModelLoader::addressMatchesMmsDataRef(QStringLiteral("E1Q1SB48PROT/LLN0.FuncEna1[ST]"),
+            QStringLiteral("E1Q1SB48PROT/LLN0$ST$FuncEna1")))
+        return false;
+
     ScdModelLoader model;
     if (!model.loadIedList(AppPaths::iedListPath()))
         return false;
-    return model.devices().size() >= 1;
+    if (model.devices().size() < 1)
+        return false;
+    const QString smcd = AppPaths::defaultSmcdPath();
+    if (QFileInfo::exists(smcd))
+        model.loadSmcd(smcd);
+    EventStore store;
+    if (!runReportEventSelfTest(model, store))
+        return false;
+    return true;
 }
 
 static int runMaintainUploadTest(int argc, char* argv[])

@@ -47,6 +47,7 @@ set(SOURCES
     src/scd/scd_model.cpp
     src/mms/mms_client_bridge.cpp
     src/event/event_store.cpp
+    src/event/report_event_logic.cpp
     src/event/event_format.cpp
     src/event/station_event_list_widget.cpp
     src/ops/config_generator.cpp
