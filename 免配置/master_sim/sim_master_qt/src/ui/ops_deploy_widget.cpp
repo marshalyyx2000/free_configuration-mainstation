@@ -137,6 +137,15 @@ OpsDeployWidget::OpsDeployWidget(SharedConnectionSettings* settings, LabWorker* 
     refreshModelInfo();
 }
 
+void OpsDeployWidget::syncConnectionFieldsToSettings()
+{
+    if (!m_settings)
+        return;
+    m_settings->setHost(m_hostEdit->text().trimmed());
+    m_settings->setMaintainPort(m_maintPortEdit->text().toInt());
+    m_settings->setMmsPort(m_mmsPortEdit->text().toInt());
+}
+
 void OpsDeployWidget::onProbe()
 {
     const QString host = m_hostEdit->text().trimmed();
@@ -151,6 +160,7 @@ void OpsDeployWidget::onProbe()
     appendLog(tr("探测 %1 …").arg(host));
     appendLog(tr("  运维 %1: %2").arg(mp).arg(LabOps::tcpReachable(host, mp) ? tr("通") : tr("不通")));
     appendLog(tr("  MMS %1: %2").arg(mms).arg(LabOps::tcpReachable(host, mms) ? tr("通") : tr("不通")));
+    appendLog(tr("  说明：端口「通」仅表示 TCP 可连；MMS 关联与订阅请切到「61850 主站」页，查看底部 MMS 日志。"));
 }
 
 void OpsDeployWidget::pickScd()

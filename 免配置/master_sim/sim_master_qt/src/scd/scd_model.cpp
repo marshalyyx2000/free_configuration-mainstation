@@ -199,6 +199,11 @@ bool ScdModelLoader::loadSmcd(const QString& path)
         if (!model.datasets.isEmpty() || !model.reports.isEmpty())
             m_models.append(model);
     }
+    for (IedDeviceEntry& d : m_devices) {
+        const IedModel* im = modelFor(d.iedName);
+        if (im && !im->desc.isEmpty())
+            d.desc = im->desc;
+    }
     return true;
 }
 
@@ -354,10 +359,28 @@ bool ScdModelLoader::addressMatchesMmsDataRef(const QString& scdAddress, const Q
         mmsRest = mmsRest.mid(slash + 1);
     if (itemId == mmsRest)
         return true;
+    if (mmsRest.startsWith(itemId + QLatin1Char('$')) || itemId.startsWith(mmsRest + QLatin1Char('$')))
+        return true;
     const QString ldPart = scdAddress.section(QLatin1Char('/'), 0, 0);
     if (!ldPart.isEmpty() && mmsDataRef == ldPart + QLatin1Char('/') + itemId)
         return true;
+    const QString fullItem = ldPart + QLatin1Char('/') + itemId;
+    if (mmsDataRef.startsWith(fullItem + QLatin1Char('$')) || fullItem.startsWith(mmsDataRef + QLatin1Char('$')))
+        return true;
     return false;
+}
+
+bool ScdModelLoader::datasetRefMatches(const QString& a, const QString& b)
+{
+    auto norm = [](QString s) {
+        s = s.trimmed();
+        if (s.startsWith(QLatin1Char('@')))
+            s = s.mid(1);
+        return s;
+    };
+    const QString na = norm(a);
+    const QString nb = norm(b);
+    return !na.isEmpty() && na == nb;
 }
 
 const DataSetEntry* ScdModelLoader::findDataset(const IedModel* model, const QString& dsName, const QString& ldInst)
@@ -392,7 +415,10 @@ bool ScdModelLoader::datasetMatchesPanel(const QString& dsName, ReportPanelType 
         return n.contains(QStringLiteral("Setting"), Qt::CaseInsensitive)
             || n.contains(QStringLiteral("SetGrp"), Qt::CaseInsensitive);
     case ReportPanelType::Other:
-        return true;
+        return !datasetMatchesPanel(n, ReportPanelType::Setting)
+            && !datasetMatchesPanel(n, ReportPanelType::RelayEna)
+            && !datasetMatchesPanel(n, ReportPanelType::Din)
+            && !datasetMatchesPanel(n, ReportPanelType::Ain);
     default:
         return false;
     }
@@ -411,20 +437,12 @@ QVector<RcbDescriptor> ScdModelLoader::allSubscribeRcbs() const
 {
     QVector<RcbDescriptor> out;
     QSet<QString> seenHandler;
-    const ReportPanelType types[] = { ReportPanelType::RelayEna, ReportPanelType::Din, ReportPanelType::Ain };
     for (const IedDeviceEntry& dev : m_devices) {
         const IedModel* model = modelFor(dev.iedName);
         if (!model)
             continue;
         for (const ReportEntry& rpt : model->reports) {
-            bool match = false;
-            for (ReportPanelType t : types) {
-                if (reportMatchesPanel(rpt, t)) {
-                    match = true;
-                    break;
-                }
-            }
-            if (!match)
+            if (rpt.datSet.isEmpty() || rpt.name.isEmpty())
                 continue;
             RcbDescriptor d;
             d.iedName = dev.iedName;

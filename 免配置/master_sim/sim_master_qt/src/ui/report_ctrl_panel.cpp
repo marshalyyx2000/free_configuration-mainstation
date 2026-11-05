@@ -157,11 +157,12 @@ void ReportCtrlPanel::rebuildUpper()
         row.dsRef = ScdModelLoader::datasetRef(m_dev.iedName, rpt.datSet, rpt.ldInst);
         row.rcbName = rpt.name;
         row.buffered = rpt.buffered;
+        row.ldInst = rpt.ldInst;
         row.handlerRef = ScdModelLoader::rcbHandlerRef(m_dev.iedName, rpt.name, rpt.buffered, rpt.ldInst);
         row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, m_dev.rptno, rpt.buffered, rpt.ldInst);
         m_rows.append(row);
 
-        const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, rpt.datSet);
+        const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, rpt.datSet, rpt.ldInst);
         const int memberCount = ds ? ds->members.size() : 0;
 
         const int r = m_upper->rowCount();
@@ -186,7 +187,7 @@ void ReportCtrlPanel::populateLowerFromModel(const RowInfo& row)
 {
     if (m_type == ReportPanelType::Wave)
         return;
-    const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, row.dsName);
+    const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, row.dsName, row.ldInst);
     if (!ds || ds->members.isEmpty()) {
         m_lower->setRowCount(0);
         return;
@@ -243,6 +244,81 @@ ReportCtrlPanel::RowInfo ReportCtrlPanel::currentRow() const
     if (r < 0 || r >= m_rows.size())
         return {};
     return m_rows[r];
+}
+
+const ReportCtrlPanel::RowInfo* ReportCtrlPanel::rowForReport(const QString& rcb, const QString& dsRef) const
+{
+    if (!dsRef.isEmpty()) {
+        for (const RowInfo& row : m_rows) {
+            if (ScdModelLoader::datasetRefMatches(dsRef, row.dsRef))
+                return &row;
+        }
+    }
+    if (!rcb.isEmpty()) {
+        for (const RowInfo& row : m_rows) {
+            if (ScdModelLoader::rcbReportRefMatches(rcb, row.handlerRef, row.getRef))
+                return &row;
+        }
+    }
+    return nullptr;
+}
+
+void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& items)
+{
+    const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, row.dsName, row.ldInst);
+    QJsonObject cache = m_dsCache.value(row.dsRef);
+    QJsonArray rows = cache.value(QStringLiteral("rows")).toArray();
+    const int memberCount = ds ? ds->members.size() : rows.size();
+    if (rows.size() < memberCount) {
+        for (int i = rows.size(); i < memberCount; ++i) {
+            QJsonObject o;
+            o.insert(QStringLiteral("idx"), i);
+            if (ds)
+                o.insert(QStringLiteral("name"), ds->members[i].address);
+            rows.append(o);
+        }
+    }
+    auto matchRow = [&](const QString& name, int idx) -> int {
+        if (!name.isEmpty() && ds) {
+            for (int i = 0; i < ds->members.size(); ++i) {
+                if (ScdModelLoader::addressMatchesMmsDataRef(ds->members[i].address, name))
+                    return i;
+            }
+        }
+        if (!name.isEmpty()) {
+            for (int i = 0; i < rows.size(); ++i) {
+                const QString existing = rows.at(i).toObject().value(QStringLiteral("name")).toString();
+                if (existing == name || ScdModelLoader::addressMatchesMmsDataRef(existing, name))
+                    return i;
+            }
+        }
+        return idx;
+    };
+    for (const QJsonValue& v : items) {
+        const QJsonObject it = v.toObject();
+        const QString name = it.value(QStringLiteral("name")).toString();
+        const int idx = it.value(QStringLiteral("idx")).toInt(-1);
+        const int r = matchRow(name, idx);
+        if (r < 0)
+            continue;
+        while (rows.size() <= r) {
+            QJsonObject o;
+            o.insert(QStringLiteral("idx"), rows.size());
+            rows.append(o);
+        }
+        QJsonObject o = rows.at(r).toObject();
+        o.insert(QStringLiteral("idx"), r);
+        if (!name.isEmpty())
+            o.insert(QStringLiteral("name"), name);
+        else if (ds && r < ds->members.size() && o.value(QStringLiteral("name")).toString().isEmpty())
+            o.insert(QStringLiteral("name"), ds->members[r].address);
+        o.insert(QStringLiteral("value"), it.value(QStringLiteral("value")));
+        rows[r] = o;
+    }
+    cache.insert(QStringLiteral("ref"), row.dsRef);
+    cache.insert(QStringLiteral("rows"), rows);
+    m_dsCache.insert(row.dsRef, cache);
+    updateEntryCountForRef(row.dsRef, rows.size());
 }
 
 void ReportCtrlPanel::onUpperSelectionChanged()
@@ -503,44 +579,11 @@ void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
     if (type != QStringLiteral("report"))
         return;
     const QString rcb = evt.value(QStringLiteral("rcb")).toString();
-    const RowInfo sel = currentRow();
-    if (sel.handlerRef.isEmpty()
-        || !ScdModelLoader::rcbReportRefMatches(rcb, sel.handlerRef, sel.getRef))
+    const QString dsRef = evt.value(QStringLiteral("ds")).toString();
+    const RowInfo* owner = rowForReport(rcb, dsRef);
+    if (!owner)
         return;
-    const QJsonArray items = evt.value(QStringLiteral("items")).toArray();
-    m_lower->setUpdatesEnabled(false);
-    for (const QJsonValue& v : items) {
-        const QJsonObject it = v.toObject();
-        const QString name = it.value(QStringLiteral("name")).toString();
-        const QString val = jsonValueText(it.value(QStringLiteral("value")));
-        const int idx = it.value(QStringLiteral("idx")).toInt(-1);
-        auto applyVal = [&](int r) {
-            if (r < 0)
-                return;
-            if (r >= m_lower->rowCount())
-                m_lower->setRowCount(r + 1);
-            if (m_lower->item(r, 2))
-                m_lower->item(r, 2)->setText(m_lower->item(r, 3) ? m_lower->item(r, 3)->text() : val);
-            else
-                m_lower->setItem(r, 2, new QTableWidgetItem(val));
-            if (m_lower->item(r, 3))
-                m_lower->item(r, 3)->setText(val);
-            else
-                m_lower->setItem(r, 3, new QTableWidgetItem(val));
-        };
-        bool matched = false;
-        if (!name.isEmpty()) {
-            for (int r = 0; r < m_lower->rowCount(); ++r) {
-                const QTableWidgetItem* addrItem = m_lower->item(r, 1);
-                if (addrItem && ScdModelLoader::addressMatchesMmsDataRef(addrItem->text(), name)) {
-                    applyVal(r);
-                    matched = true;
-                    break;
-                }
-            }
-        }
-        if (!matched && idx >= 0)
-            applyVal(idx);
-    }
-    m_lower->setUpdatesEnabled(true);
+    ingestReportItems(*owner, evt.value(QStringLiteral("items")).toArray());
+    if (currentRow().dsRef == owner->dsRef)
+        fillLowerFromJson(m_dsCache.value(owner->dsRef));
 }

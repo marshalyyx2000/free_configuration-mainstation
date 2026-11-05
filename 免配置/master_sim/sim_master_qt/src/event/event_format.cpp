@@ -36,7 +36,7 @@ QString formatReportReason(int reasonCode)
 {
     switch (reasonCode) {
     case 1:
-        return QStringLiteral("数据变化");
+        return QStringLiteral("突发上送");
     case 2:
         return QStringLiteral("品质变化");
     case 4:
@@ -49,6 +49,8 @@ QString formatReportReason(int reasonCode)
         return QStringLiteral("应用触发");
     case 64:
         return QStringLiteral("连接丢失");
+    case 7:
+        return QStringLiteral("数据变化");
     default:
         if (reasonCode == 0)
             return QStringLiteral("-");

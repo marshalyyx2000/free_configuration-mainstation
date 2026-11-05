@@ -91,6 +91,8 @@ public:
     static bool rcbReportRefMatches(const QString& reportRcb, const QString& handlerRef, const QString& getRef);
     /** SCD FCDA address (LD/LN.DO[FC]) vs MMS data reference in reports. */
     static bool addressMatchesMmsDataRef(const QString& scdAddress, const QString& mmsDataRef);
+    /** DatSet in reports may be prefixed with '@'. */
+    static bool datasetRefMatches(const QString& a, const QString& b);
     static const ReportEntry* findReportForHandler(const IedModel* model, const QString& handlerRef);
     static const DataSetEntry* findDataset(const IedModel* model, const QString& dsName,
         const QString& ldInst = QStringLiteral("LD0"));

@@ -4,6 +4,7 @@
 #include "scd/scd_model.h"
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
 #include <QStringList>
@@ -46,11 +47,14 @@ private:
         QString rcbName;
         QString handlerRef;
         QString getRef;
+        QString ldInst;
         bool buffered = true;
     };
 
     void rebuildUpper();
     RowInfo currentRow() const;
+    const RowInfo* rowForReport(const QString& rcb, const QString& dsRef) const;
+    void ingestReportItems(const RowInfo& row, const QJsonArray& items);
     void populateLowerFromModel(const RowInfo& row);
     void applyCachedValues(const RowInfo& row);
     void updateEntryCountForRef(const QString& dsRef, int count);

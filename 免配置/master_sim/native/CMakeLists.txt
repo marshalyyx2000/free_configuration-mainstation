@@ -29,3 +29,8 @@ if(NOT EXISTS "${IEC61850_LIB}" OR NOT EXISTS "${HAL_LIB}")
 endif()
 
 target_link_libraries(mms_master_cli PRIVATE "${IEC61850_LIB}" "${HAL_LIB}")
+
+# Child of sim_master_qt via QProcess — no console window when started
+if(MSVC)
+  set_target_properties(mms_master_cli PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
+endif()

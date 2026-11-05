@@ -20,6 +20,13 @@
 #include <optional>
 #include <stdexcept>
 
+#ifdef Q_OS_WIN
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace LabOps {
 
 namespace {
@@ -274,6 +281,13 @@ int runMmsCheck(const QString& host, int mmsPort, MmsClientBridge* bridge, const
         proc.setProgram(cliPath);
         proc.setWorkingDirectory(QFileInfo(cliPath).absolutePath());
         proc.setProcessChannelMode(QProcess::SeparateChannels);
+#ifdef Q_OS_WIN
+        proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+            args->flags |= CREATE_NO_WINDOW;
+            args->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+            args->startupInfo->wShowWindow = SW_HIDE;
+        });
+#endif
         proc.start();
         if (!proc.waitForStarted(5000)) {
             lg(QStringLiteral("无法启动 mms_master_cli"));

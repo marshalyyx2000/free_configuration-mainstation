@@ -16,8 +16,6 @@ QString devMasterSimRoot()
     for (int i = 0; i < 12; ++i) {
         if (QFileInfo::exists(d.absoluteFilePath(QStringLiteral("gui.py"))))
             return d.absolutePath();
-        if (QFileInfo::exists(d.absoluteFilePath(QStringLiteral("out/IEDList.xml"))))
-            return d.absolutePath();
         if (!d.cdUp())
             break;
     }
@@ -105,6 +103,13 @@ QString defaultScdPath()
         const QString p = QDir(dev).absoluteFilePath(QStringLiteral("../子站scd/26579.SCD"));
         if (QFileInfo::exists(p))
             return QFileInfo(p).absoluteFilePath();
+    }
+
+    const QByteArray envScd = qgetenv("SIMMASTER_DEFAULT_SCD");
+    if (!envScd.isEmpty()) {
+        const QString p = QFileInfo(QString::fromLocal8Bit(envScd)).absoluteFilePath();
+        if (QFileInfo::exists(p))
+            return p;
     }
     return QString();
 }

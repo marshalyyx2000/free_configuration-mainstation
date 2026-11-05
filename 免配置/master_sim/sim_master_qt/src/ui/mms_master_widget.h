@@ -5,7 +5,10 @@
 #include "mms/mms_client_bridge.h"
 #include "scd/scd_model.h"
 
+#include <QHash>
+#include <QJsonObject>
 #include <QSet>
+#include <QVector>
 #include <QWidget>
 
 class SharedConnectionSettings;
@@ -33,6 +36,7 @@ private slots:
     void openScd();
     void subscribeAllStation();
     void unsubscribeAllStation();
+    void giAllStation();
     void onIedSelected(const IedDeviceEntry& dev);
     void onMmsEvent(const QJsonObject& evt);
     void onSettingsChanged();
@@ -50,6 +54,8 @@ private:
     void appendMmsLog(const QString& msg);
     void appendRcbControlEvent(const QString& category, const QString& handlerRef, const QString& summary);
     void subscribeRcbDescriptors(const QVector<RcbDescriptor>& list, QProgressDialog* prog);
+    void dispatchReportToPanels(const QString& iedName, const QJsonObject& evt);
+    void flushPendingReports(const QString& iedName);
     IedPageSet* pagesFor(const QString& iedName);
     ReportCtrlPanel* panelForIed(const QString& iedName, ReportPanelType type);
 
@@ -68,6 +74,7 @@ private:
     QSet<QString> m_subscribedHandlers;
     QHash<QString, bool> m_commState;
     QHash<QString, QString> m_lastValues;
+    QHash<QString, QVector<QJsonObject>> m_pendingReportsByIed;
     QString m_smcdPath;
 };
 

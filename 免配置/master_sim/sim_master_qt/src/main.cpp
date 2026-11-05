@@ -18,6 +18,17 @@ static bool runVerifySelfTest()
     if (!ScdModelLoader::addressMatchesMmsDataRef(QStringLiteral("E1Q1SB48PROT/LLN0.FuncEna1[ST]"),
             QStringLiteral("E1Q1SB48PROT/LLN0$ST$FuncEna1")))
         return false;
+    if (!ScdModelLoader::addressMatchesMmsDataRef(QStringLiteral("E1Q1SB23CTRL/CSWI1.Pos[ST]"),
+            QStringLiteral("E1Q1SB23CTRL/CSWI1$ST$Pos$stVal")))
+        return false;
+    if (!ScdModelLoader::datasetRefMatches(QStringLiteral("@E1Q1SB23CTRL/LLN0$dsDin1"),
+            QStringLiteral("E1Q1SB23CTRL/LLN0$dsDin1")))
+        return false;
+    if (!ScdModelLoader::datasetMatchesPanel(QStringLiteral("dsRelayFunEn"), ReportPanelType::Other)
+        || !ScdModelLoader::datasetMatchesPanel(QStringLiteral("dsRelayState"), ReportPanelType::Other)
+        || ScdModelLoader::datasetMatchesPanel(QStringLiteral("dsRelayEna"), ReportPanelType::Other)
+        || !ScdModelLoader::datasetMatchesPanel(QStringLiteral("dsRelayEna"), ReportPanelType::RelayEna))
+        return false;
 
     ScdModelLoader model;
     if (!model.loadIedList(AppPaths::iedListPath()))
@@ -29,6 +40,36 @@ static bool runVerifySelfTest()
         model.loadSmcd(smcd);
     EventStore store;
     if (!runReportEventSelfTest(model, store))
+        return false;
+    {
+        const IedModel* im = model.modelFor(QStringLiteral("E1Q1SB20"));
+        if (im && !im->desc.isEmpty() && im->desc != QStringLiteral("E1Q1SB20")) {
+            bool labeled = false;
+            for (const IedDeviceEntry& d : model.devices()) {
+                if (d.iedName == QStringLiteral("E1Q1SB20") && d.desc == im->desc)
+                    labeled = true;
+            }
+            if (!labeled)
+                return false;
+        }
+    }
+
+    bool modelHasOtherRcb = false;
+    bool subscribedOtherRcb = false;
+    for (const IedDeviceEntry& dev : model.devices()) {
+        const IedModel* im = model.modelFor(dev.iedName);
+        if (!im)
+            continue;
+        for (const ReportEntry& rpt : im->reports) {
+            if (ScdModelLoader::datasetMatchesPanel(rpt.datSet, ReportPanelType::Other))
+                modelHasOtherRcb = true;
+        }
+    }
+    for (const RcbDescriptor& d : model.allSubscribeRcbs()) {
+        if (ScdModelLoader::datasetMatchesPanel(d.dsName, ReportPanelType::Other))
+            subscribedOtherRcb = true;
+    }
+    if (modelHasOtherRcb && !subscribedOtherRcb)
         return false;
     return true;
 }

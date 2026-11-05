@@ -77,7 +77,8 @@ void IedTreeWidget::rebuildTree()
     m_tree->clear();
     for (int i = 0; i < m_devices.size(); ++i) {
         const IedDeviceEntry& d = m_devices[i];
-        const QString labelText = QStringLiteral("%1-[%2]%3").arg(d.no).arg(d.iedName, d.desc);
+        const QString desc = d.desc.isEmpty() ? d.iedName : d.desc;
+        const QString labelText = QStringLiteral("[%1]%2").arg(d.iedName, desc);
         if (!matchesMultiSegmentSearch(labelText, m_filter))
             continue;
         auto* item = new QTreeWidgetItem(m_tree);

@@ -2,12 +2,51 @@
  * mms_master_cli - JSONL stdin/stdout MMS master for master_sim GUI.
  */
 #include "iec61850_client.h"
+#include "iec61850_common.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#ifdef REASON_UNKNOWN
+#undef REASON_UNKNOWN
+#endif
+static CRITICAL_SECTION g_stdout_lock;
+static INIT_ONCE g_stdout_once = INIT_ONCE_STATIC_INIT;
+static BOOL CALLBACK stdout_lock_init(PINIT_ONCE once, PVOID param, PVOID* ctx)
+{
+    (void)once;
+    (void)param;
+    (void)ctx;
+    InitializeCriticalSection(&g_stdout_lock);
+    return TRUE;
+}
+static void stdout_lock(void)
+{
+    InitOnceExecuteOnce(&g_stdout_once, stdout_lock_init, NULL, NULL);
+    EnterCriticalSection(&g_stdout_lock);
+}
+static void stdout_unlock(void)
+{
+    LeaveCriticalSection(&g_stdout_lock);
+}
+#else
+static void stdout_lock(void)
+{
+    flockfile(stdout);
+}
+static void stdout_unlock(void)
+{
+    funlockfile(stdout);
+}
+#endif
 
 const char* ied_error_message(IedClientError error);
 
@@ -49,13 +88,16 @@ static void json_escape_print(FILE* out, const char* s) {
 }
 
 static void emit_error(const char* msg) {
+    stdout_lock();
     printf("{\"evt\":\"error\",\"msg\":");
     json_escape_print(stdout, msg ? msg : "unknown");
     printf("}\n");
     fflush(stdout);
+    stdout_unlock();
 }
 
 static void emit_ok_ref(const char* cmd, const char* handlerRef) {
+    stdout_lock();
     printf("{\"evt\":\"ok\",\"cmd\":");
     json_escape_print(stdout, cmd);
     if (handlerRef && handlerRef[0]) {
@@ -64,6 +106,7 @@ static void emit_ok_ref(const char* cmd, const char* handlerRef) {
     }
     printf("}\n");
     fflush(stdout);
+    stdout_unlock();
 }
 
 static void emit_ok(const char* cmd) {
@@ -319,6 +362,7 @@ static void emit_dataset_values(const char* ref, MmsValue* values) {
     } else if (values) {
         n = 1;
     }
+    stdout_lock();
     printf("{\"evt\":\"dataset\",\"ref\":");
     json_escape_print(stdout, ref);
     printf(",\"rows\":[");
@@ -332,6 +376,7 @@ static void emit_dataset_values(const char* ref, MmsValue* values) {
     }
     printf("]}\n");
     fflush(stdout);
+    stdout_unlock();
 }
 
 static bool comm_stval_from_item(MmsValue* item, bool* out) {
@@ -407,6 +452,31 @@ static ActiveRcb* find_rcb_by_handler(const char* handlerRef) {
     return NULL;
 }
 
+static const char* skip_ds_at(const char* s)
+{
+    if (s && s[0] == '@')
+        return s + 1;
+    return s;
+}
+
+static bool same_ds_ref(const char* a, const char* b)
+{
+    a = skip_ds_at(a);
+    b = skip_ds_at(b);
+    return a && b && a[0] && strcmp(a, b) == 0;
+}
+
+static ActiveRcb* find_rcb_by_dataset(const char* dsRef)
+{
+    if (!dsRef || !dsRef[0])
+        return NULL;
+    for (int i = 0; i < MAX_RCB; i++) {
+        if (g_rcbs[i].used && same_ds_ref(g_rcbs[i].dsRef, dsRef))
+            return &g_rcbs[i];
+    }
+    return NULL;
+}
+
 static bool report_item_value_changed(MmsValue* cur, MmsValue* prev) {
     if (!cur) {
         return false;
@@ -451,30 +521,33 @@ static void reportCallback(void* parameter, ClientReport report) {
      * dispatches the report to the first handler installed for that RptID.
      * Re-dispatch by the report's DatSet so values, previous snapshot and
      * RCB reference belong to the data set that actually changed.
+     * DatSet in the report is often prefixed with '@'.
      */
     ActiveRcb* target = slot;
     const char* dataSetName = ClientReport_hasDataSetName(report)
         ? ClientReport_getDataSetName(report) : NULL;
-    if (dataSetName && dataSetName[0]) {
-        for (int i = 0; i < MAX_RCB; i++) {
-            if (g_rcbs[i].used && g_rcbs[i].dsRef[0]
-                && strcmp(g_rcbs[i].dsRef, dataSetName) == 0) {
-                target = &g_rcbs[i];
-                break;
-            }
-        }
-    }
+    ActiveRcb* byDs = find_rcb_by_dataset(dataSetName);
+    if (byDs)
+        target = byDs;
 
     MmsValue* dataSetValues = ClientReport_getDataSetValues(report);
     const char* rcbRef = target->rcbGetRef[0] ? target->rcbGetRef : slot->rcbGetRef;
+    const char* dsOut = (dataSetName && dataSetName[0]) ? skip_ds_at(dataSetName)
+                                                       : (target->dsRef[0] ? target->dsRef : "");
+    const bool hasReason = ClientReport_hasReasonForInclusion(report);
 
+    stdout_lock();
     printf("{\"evt\":\"report\",\"rcb\":");
     json_escape_print(stdout, rcbRef ? rcbRef : "");
+    printf(",\"ds\":");
+    json_escape_print(stdout, dsOut ? dsOut : "");
     printf(",\"items\":[");
     int first = 1;
     int n = dataSetValues ? MmsValue_getArraySize(dataSetValues) : 0;
     for (int i = 0; i < n; i++) {
-        ReasonForInclusion reason = ClientReport_getReasonForInclusion(report, i);
+        ReasonForInclusion reason = hasReason
+            ? ClientReport_getReasonForInclusion(report, i)
+            : IEC61850_REASON_GI;
         MmsValue* curVal = dataSetValues ? MmsValue_getElement(dataSetValues, i) : NULL;
         MmsValue* prevVal = (target->prevDsValues && dataSetValues) ? MmsValue_getElement(target->prevDsValues, i) : NULL;
         if (reason == IEC61850_REASON_NOT_INCLUDED) {
@@ -513,6 +586,7 @@ static void reportCallback(void* parameter, ClientReport report) {
     }
     printf("]}\n");
     fflush(stdout);
+    stdout_unlock();
     snapshot_report_values(target, dataSetValues);
 }
 
@@ -826,17 +900,26 @@ static void cmd_enable_rcb(const char* line) {
     ClientReportControlBlock_setTrgOps(
         slot->rcb, TRG_OPT_DATA_CHANGED | TRG_OPT_QUALITY_CHANGED | TRG_OPT_GI);
     ClientReportControlBlock_setDataSetReference(slot->rcb, dsRef);
+    ClientReportControlBlock_setOptFlds(slot->rcb,
+        RPT_OPT_SEQ_NUM | RPT_OPT_TIME_STAMP | RPT_OPT_REASON_FOR_INCLUSION | RPT_OPT_DATA_SET
+            | RPT_OPT_DATA_REFERENCE | RPT_OPT_CONF_REV);
     ClientReportControlBlock_setRptEna(slot->rcb, true);
     ClientReportControlBlock_setGI(slot->rcb, true);
 
     IedConnection_installReportHandler(
         g_con, slot->rcbGetRef, ClientReportControlBlock_getRptId(slot->rcb), reportCallback, slot);
 
-    uint32_t mask = RCB_ELEMENT_DATSET | RCB_ELEMENT_TRG_OPS | RCB_ELEMENT_RPT_ENA | RCB_ELEMENT_GI;
+    uint32_t mask = RCB_ELEMENT_DATSET | RCB_ELEMENT_TRG_OPS | RCB_ELEMENT_OPT_FLDS | RCB_ELEMENT_RPT_ENA
+        | RCB_ELEMENT_GI;
     if (!ClientReportControlBlock_isBuffered(slot->rcb)) {
         mask |= RCB_ELEMENT_RESV;
     }
     IedConnection_setRCBValues(g_con, &err, slot->rcb, mask, true);
+    if (err != IED_ERROR_OK) {
+        mask &= ~RCB_ELEMENT_OPT_FLDS;
+        err = IED_ERROR_OK;
+        IedConnection_setRCBValues(g_con, &err, slot->rcb, mask, true);
+    }
     if (err != IED_ERROR_OK) {
         free_rcb_slot(slot);
         emit_error(ied_error_message(err));

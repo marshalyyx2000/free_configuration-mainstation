@@ -16,6 +16,11 @@ public:
     bool runSelfTest();
 
 private:
+    void adjustUiFont(int delta);
+    void applyUiFont(int pointSize);
+
+    int m_uiFontPt = 9;
+    int m_uiFontDefaultPt = 9;
     SharedConnectionSettings* m_settings = nullptr;
     LabWorker* m_worker = nullptr;
     QThread* m_workerThread = nullptr;

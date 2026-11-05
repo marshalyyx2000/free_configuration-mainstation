@@ -19,6 +19,8 @@ class OpsDeployWidget : public QWidget {
 public:
     explicit OpsDeployWidget(SharedConnectionSettings* settings, LabWorker* worker, QWidget* parent = nullptr);
 
+    void syncConnectionFieldsToSettings();
+
 signals:
     void requestJob(LabJobKind kind);
     void modelOutputsChanged();

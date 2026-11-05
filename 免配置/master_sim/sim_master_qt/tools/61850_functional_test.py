@@ -22,12 +22,7 @@ def _install_root() -> Path:
     override = os.environ.get("SIMMASTER_INSTALL_DIR")
     if override:
         return Path(override)
-    pf = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "SimMasterQt"
-    legacy = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/SimMasterQt"
-    if (pf / "bin/sim_master_qt.exe").is_file():
-        return pf
-    if (legacy / "bin/sim_master_qt.exe").is_file():
-        return legacy
+    pf = Path(os.environ.get("ProgramW6432") or os.environ.get("ProgramFiles", r"C:\Program Files")) / "SimMasterQt"
     return pf
 
 

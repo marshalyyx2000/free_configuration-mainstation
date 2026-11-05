@@ -18,12 +18,17 @@ MmsClientBridge::MmsClientBridge(QObject* parent)
 {
     const QDir appDir(QCoreApplication::applicationDirPath());
     m_cliPath = appDir.absoluteFilePath(QStringLiteral("mms_master_cli.exe"));
-    if (!QFileInfo::exists(m_cliPath))
-        m_cliPath = appDir.absoluteFilePath(QStringLiteral("../bin/mms_master_cli.exe"));
     if (!QFileInfo::exists(m_cliPath)) {
-        QDir root(appDir);
-        root.cdUp();
-        m_cliPath = root.absoluteFilePath(QStringLiteral("bin/mms_master_cli.exe"));
+        QDir d(appDir);
+        for (int i = 0; i < 8; ++i) {
+            const QString cand = d.absoluteFilePath(QStringLiteral("bin/mms_master_cli.exe"));
+            if (QFileInfo::exists(cand)) {
+                m_cliPath = cand;
+                break;
+            }
+            if (!d.cdUp())
+                break;
+        }
     }
 }
 

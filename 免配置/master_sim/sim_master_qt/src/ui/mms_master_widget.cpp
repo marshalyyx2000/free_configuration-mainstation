@@ -3,6 +3,7 @@
 #include "settings/shared_connection_settings.h"
 #include "ui/ied_tree_widget.h"
 #include "ui/report_ctrl_panel.h"
+#include "event/report_event_logic.h"
 #include "event/event_format.h"
 #include "scd/scd_model.h"
 #include "util/app_paths.h"
@@ -37,6 +38,7 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     tb->addSeparator();
     tb->addAction(tr("全站订阅"), this, &MmsMasterWidget::subscribeAllStation);
     tb->addAction(tr("取消全站订阅"), this, &MmsMasterWidget::unsubscribeAllStation);
+    tb->addAction(tr("全站总召唤"), this, &MmsMasterWidget::giAllStation);
     tb->addSeparator();
     tb->addAction(tr("打开 SCD/SMCD…"), this, &MmsMasterWidget::openScd);
     tb->addSeparator();
@@ -66,8 +68,9 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     m_log = new QTextEdit(this);
     m_log->setObjectName(QStringLiteral("MmsMasterLog"));
     m_log->setReadOnly(true);
-    m_log->setMinimumHeight(90);
-    m_log->setMaximumHeight(180);
+    m_log->setMinimumHeight(120);
+    m_log->setMaximumHeight(220);
+    m_log->setPlaceholderText(tr("连接 SubStation、订阅 RCB 等操作日志将显示在此处"));
 
     auto* split = new QSplitter(this);
     split->addWidget(m_iedTree);
@@ -79,6 +82,7 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     v->addWidget(tb);
     v->addWidget(m_iedInfo);
     v->addWidget(split, 1);
+    v->addWidget(new QLabel(tr("MMS 连接日志（与运维页「探测端口」无关，需本页连接 SubStation）"), this));
     v->addWidget(m_log);
 
     connect(&m_mms, &MmsClientBridge::eventReceived, this, &MmsMasterWidget::onMmsEvent);
@@ -97,10 +101,10 @@ bool MmsMasterWidget::runSelfTest()
 void MmsMasterWidget::reloadModelData()
 {
     m_model.loadIedList(AppPaths::iedListPath());
-    m_iedTree->setDevices(m_model.devices());
     m_smcdPath = AppPaths::defaultSmcdPath();
     if (QFileInfo::exists(m_smcdPath))
         m_model.loadSmcd(m_smcdPath);
+    m_iedTree->setDevices(m_model.devices());
     if (!m_model.devices().isEmpty())
         m_iedTree->selectIed(m_model.devices().first().iedName);
     refreshCurrentIed();
@@ -122,7 +126,9 @@ void MmsMasterWidget::loadDefaultData()
 
 void MmsMasterWidget::appendMmsLog(const QString& msg)
 {
-    m_log->append(msg);
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm:ss"));
+    const QString line = QStringLiteral("[%1] %2").arg(stamp, msg);
+    m_log->append(line);
     const QString path = qEnvironmentVariable("SIM_MASTER_TEST_LOG");
     if (path.isEmpty())
         return;
@@ -132,7 +138,7 @@ void MmsMasterWidget::appendMmsLog(const QString& msg)
         file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
     }
     if (file.isOpen()) {
-        file.write(msg.toUtf8());
+        file.write(line.toUtf8());
         file.write("\n");
         file.flush();
     }
@@ -158,19 +164,36 @@ void MmsMasterWidget::connectSubstation()
 {
     if (!m_settings)
         return;
+    const QString host = m_settings->host();
+    const int port = m_settings->mmsPort();
+    if (host.trimmed().isEmpty()) {
+        appendMmsLog(tr("子站 IP 为空，请先在「运维 / 下装」页填写并保存"));
+        return;
+    }
     if (m_mms.connected()) {
-        appendMmsLog(tr("已连接 %1:%2").arg(m_settings->host()).arg(m_settings->mmsPort()));
+        appendMmsLog(tr("已连接 %1:%2").arg(host).arg(port));
         return;
     }
     if (!m_mms.available()) {
-        const QString msg = tr("未找到 mms_master_cli.exe\n%1").arg(m_mms.cliPath());
+        const QString msg = tr("未找到 mms_master_cli.exe（与 sim_master_qt.exe 同目录）\n%1\n请重新运行 install_sim_master.ps1 完整安装。")
+                                .arg(m_mms.cliPath());
         appendMmsLog(msg);
         QMessageBox::warning(this, tr("无法连接"), msg);
         return;
     }
-    m_linkStatus->setText(tr("正在连接 %1:%2 …").arg(m_settings->host()).arg(m_settings->mmsPort()));
+    appendMmsLog(tr("开始 MMS 连接 %1:%2，CLI: %3").arg(host).arg(port).arg(m_mms.cliPath()));
+    m_linkStatus->setText(tr("正在连接 %1:%2 …").arg(host).arg(port));
     m_linkStatus->setStyleSheet(QStringLiteral("color:#a60; font-weight:bold; padding-left:8px;"));
-    m_mms.connectHost(m_settings->host(), m_settings->mmsPort());
+    m_mms.connectHost(host, port);
+    QTimer::singleShot(35000, this, [this, host, port]() {
+        if (m_mms.connected())
+            return;
+        if (!m_linkStatus->text().contains(QStringLiteral("正在连接")))
+            return;
+        appendMmsLog(tr("连接超时：35s 内未收到 MMS 握手成功（TCP 102 通 ≠ MMS 已关联）"));
+        m_linkStatus->setText(tr("连接超时"));
+        m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+    });
 }
 
 void MmsMasterWidget::disconnectSubstation()
@@ -254,6 +277,7 @@ void MmsMasterWidget::onIedSelected(const IedDeviceEntry& dev)
     IedPageSet* set = pagesFor(dev.iedName);
     m_iedStack->setCurrentWidget(set->tabs);
     refreshCurrentIed();
+    flushPendingReports(dev.iedName);
 }
 
 void MmsMasterWidget::refreshCurrentIed()
@@ -273,6 +297,29 @@ void MmsMasterWidget::updateSubscribedUi()
         for (ReportCtrlPanel* p : it->panels)
             p->setSubscribedHandlers(m_subscribedHandlers);
     }
+}
+
+void MmsMasterWidget::dispatchReportToPanels(const QString& iedName, const QJsonObject& evt)
+{
+    if (iedName.isEmpty())
+        return;
+    if (!m_pages.contains(iedName)) {
+        auto& queued = m_pendingReportsByIed[iedName];
+        if (queued.size() < 64)
+            queued.append(evt);
+        return;
+    }
+    for (ReportCtrlPanel* p : m_pages[iedName].panels)
+        p->handleMmsEvent(evt);
+}
+
+void MmsMasterWidget::flushPendingReports(const QString& iedName)
+{
+    if (iedName.isEmpty() || !m_pendingReportsByIed.contains(iedName))
+        return;
+    const QVector<QJsonObject> queued = m_pendingReportsByIed.take(iedName);
+    for (const QJsonObject& evt : queued)
+        dispatchReportToPanels(iedName, evt);
 }
 
 void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list, QProgressDialog* prog)
@@ -356,73 +403,25 @@ void MmsMasterWidget::unsubscribeAllStation()
     updateSubscribedUi();
 }
 
+void MmsMasterWidget::giAllStation()
+{
+    if (!m_mms.connected()) {
+        QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
+        return;
+    }
+    if (m_subscribedHandlers.isEmpty()) {
+        QMessageBox::warning(this, tr("提示"), tr("全站总召唤未执行：请先全站订阅"));
+        return;
+    }
+    const QSet<QString> handlers = m_subscribedHandlers;
+    for (const QString& h : handlers)
+        m_mms.triggerGi(h);
+    appendMmsLog(tr("全站总召唤：已向 %1 个报告控制块发出总召唤").arg(handlers.size()));
+}
+
 void MmsMasterWidget::appendEventFromReport(const QJsonObject& evt)
 {
-    const QString rcbRef = evt.value(QStringLiteral("rcb")).toString();
-    QString iedName;
-    for (const IedDeviceEntry& d : m_model.devices()) {
-        if (rcbRef.startsWith(d.iedName)) {
-            iedName = d.iedName;
-            break;
-        }
-    }
-    const IedDeviceEntry* dev = nullptr;
-    for (const IedDeviceEntry& d : m_model.devices()) {
-        if (d.iedName == iedName) {
-            dev = &d;
-            break;
-        }
-    }
-    const IedModel* model = m_model.modelFor(iedName);
-    const ReportEntry* rpt = ScdModelLoader::findReportForHandler(model, rcbRef);
-    const DataSetEntry* ds = rpt ? ScdModelLoader::findDataset(model, rpt->datSet, rpt->ldInst) : nullptr;
-    const QJsonArray items = evt.value(QStringLiteral("items")).toArray();
-    QVector<StationEvent> batch;
-    batch.reserve(items.size());
-    for (const QJsonValue& v : items) {
-        const QJsonObject it = v.toObject();
-        const QString name = it.value(QStringLiteral("name")).toString();
-        const int idx = it.value(QStringLiteral("idx")).toInt(-1);
-        QString addr = name;
-        QString desc;
-        if (ds && idx >= 0 && idx < ds->members.size()) {
-            addr = ds->members[idx].address;
-            desc = ds->members[idx].desc;
-        } else if (!name.isEmpty()) {
-            addr = name;
-            desc = name;
-        } else if (idx >= 0) {
-            desc = tr("数据集条目 %1").arg(idx + 1);
-            addr = QStringLiteral("#%1").arg(idx);
-        }
-        const QString val = formatReportValue(it.value(QStringLiteral("value")));
-        const int reason = it.value(QStringLiteral("reason")).toInt();
-        const QString key = iedName + QLatin1Char('|') + addr + QLatin1Char('|') + QString::number(idx);
-        const QString oldVal = m_lastValues.value(key);
-        if (oldVal == val && !oldVal.isEmpty() && reason != 16)
-            continue;
-        m_lastValues.insert(key, val);
-        StationEvent se;
-        se.time = QDateTime::currentDateTime();
-        if (it.contains(QStringLiteral("ts_ms")))
-            se.time = QDateTime::fromMSecsSinceEpoch(it.value(QStringLiteral("ts_ms")).toVariant().toLongLong());
-        se.category = reason == 16 ? StationEventCategory::giReport() : StationEventCategory::pointChange();
-        se.iedName = iedName;
-        se.iedDesc = dev ? dev->desc : iedName;
-        se.rcbRef = rcbRef;
-        se.rcbName = rcbRef.section(QLatin1Char('$'), -1);
-        if (rpt && !rpt->desc.isEmpty())
-            se.rcbName = rpt->desc + QStringLiteral(" (") + se.rcbName + QLatin1Char(')');
-        se.pointName = desc;
-        se.address = addr;
-        se.oldValue = oldVal;
-        se.newValue = val;
-        se.reason = reason;
-        se.reasonText = formatReportReason(reason);
-        batch.append(se);
-    }
-    if (!batch.isEmpty())
-        m_events.appendBatch(batch);
+    ingestMmsReportEvent(m_model, m_events, m_lastValues, evt);
 }
 
 void MmsMasterWidget::appendRcbControlEvent(const QString& category, const QString& handlerRef,
@@ -434,11 +433,22 @@ void MmsMasterWidget::appendRcbControlEvent(const QString& category, const QStri
     se.pointName = summary;
     se.reasonText = category;
     if (!handlerRef.isEmpty()) {
-        for (const IedDeviceEntry& d : m_model.devices()) {
-            if (handlerRef.startsWith(d.iedName)) {
-                se.iedName = d.iedName;
-                se.iedDesc = d.desc.isEmpty() ? d.iedName : d.desc;
-                break;
+        const QString ied = m_model.resolveIedFromMmsRef(handlerRef);
+        if (!ied.isEmpty()) {
+            for (const IedDeviceEntry& d : m_model.devices()) {
+                if (d.iedName == ied) {
+                    se.iedName = d.iedName;
+                    se.iedDesc = d.desc.isEmpty() ? d.iedName : d.desc;
+                    break;
+                }
+            }
+        } else {
+            for (const IedDeviceEntry& d : m_model.devices()) {
+                if (handlerRef.startsWith(d.iedName)) {
+                    se.iedName = d.iedName;
+                    se.iedDesc = d.desc.isEmpty() ? d.iedName : d.desc;
+                    break;
+                }
             }
         }
         se.rcbRef = handlerRef;
@@ -497,17 +507,23 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
     }
     if (type == QStringLiteral("report")) {
         appendEventFromReport(evt);
-        const QString rcb = evt.value(QStringLiteral("rcb")).toString();
-        QString iedName;
-        for (const IedDeviceEntry& d : m_model.devices()) {
-            if (rcb.startsWith(d.iedName)) {
-                iedName = d.iedName;
-                break;
-            }
+        const QJsonArray repItems = evt.value(QStringLiteral("items")).toArray();
+        if (repItems.isEmpty()) {
+            appendMmsLog(tr("收到报告 %1，但无上送条目（请确认已用最新 mms_master_cli）")
+                .arg(evt.value(QStringLiteral("rcb")).toString()));
         }
-        if (!iedName.isEmpty() && m_pages.contains(iedName)) {
-            for (ReportCtrlPanel* p : m_pages[iedName].panels)
-                p->handleMmsEvent(evt);
+        const QString rcb = evt.value(QStringLiteral("rcb")).toString();
+        const QString ds = evt.value(QStringLiteral("ds")).toString();
+        QString iedName = m_model.resolveIedFromMmsRef(rcb);
+        if (iedName.isEmpty())
+            iedName = m_model.resolveIedFromMmsRef(ds);
+        if (!iedName.isEmpty()) {
+            dispatchReportToPanels(iedName, evt);
+        } else {
+            for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
+                for (ReportCtrlPanel* p : it->panels)
+                    p->handleMmsEvent(evt);
+            }
         }
         return;
     }

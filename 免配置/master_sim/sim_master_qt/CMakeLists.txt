@@ -68,7 +68,7 @@ if(WIN32)
     list(APPEND SOURCES "${CMAKE_CURRENT_BINARY_DIR}/sim_master_qt.rc")
 endif()
 
-add_executable(sim_master_qt ${SOURCES})
+add_executable(sim_master_qt WIN32 ${SOURCES})
 
 if(WIN32)
   set_target_properties(sim_master_qt PROPERTIES WIN32_EXECUTABLE TRUE)
@@ -126,15 +126,30 @@ set(CPACK_PACKAGE_NAME "SimMasterQt")
 set(CPACK_PACKAGE_VENDOR "master_sim")
 set(CPACK_PACKAGE_VERSION "${APP_VERSION_DISPLAY}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "SimMasterQt")
-# Same tree as install_sim_master.ps1 → %ProgramFiles%\SimMasterQt (forward slashes for CPack)
-if(DEFINED ENV{ProgramFiles})
-  set(_simmaster_nsis_root "$ENV{ProgramFiles}")
-else()
-  set(_simmaster_nsis_root "C:/Program Files")
-endif()
-string(REPLACE "\\" "/" _simmaster_nsis_root "${_simmaster_nsis_root}")
-set(CPACK_NSIS_INSTALL_ROOT "${_simmaster_nsis_root}")
-set(CPACK_NSIS_DEFINES "RequestExecutionLevel admin")
+# NSIS: always the native 64-bit Program Files (never LocalAppData).
+# $PROGRAMFILES64 is expanded by NSIS itself, so the installer shows a clean
+# "C:\Program Files\SimMasterQt" instead of a mixed "C:/Program Files\..." path.
+set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES64")
+# Must appear before MUI_PAGE_DIRECTORY in CPack template (injected at @CPACK_NSIS_DEFINES@).
+# VERIFYONLEAVE keeps "Next" enabled; default DirVerify disables it for Program Files.
+# The helper script is copied next to project.nsi because makensis resolves
+# !include relative to the generated script (and CPack does not pass include dirs).
+set(CPACK_NSIS_DEFINES [[
+!define MUI_DIRECTORYPAGE_VERIFYONLEAVE
+!define MUI_STARTMENUPAGE_DEFAULTFOLDER SimMasterQt
+!include cpack_nsis_include.nsh
+]])
+set(CPACK_NSIS_EXTRA_PREINSTALL_COMMANDS "Call simMasterStopRunning")
+# windeployqt creates plugin sub-folders (platforms, imageformats, ...) that are
+# not part of the CMake install manifest, so CPack's generated Delete/RMDir list
+# leaves them behind.  Remove the whole tree, but only when the folder really is
+# our own install root (never a folder the user picked for something else).
+set(CPACK_NSIS_EXTRA_UNINSTALL_COMMANDS [[
+  StrCpy $0 $INSTDIR 11 -11
+  StrCmp $0 SimMasterQt 0 +2
+    RMDir /r $INSTDIR
+]])
+set(CPACK_NSIS_UNINSTALL_NAME "Uninstall SimMasterQt")
 set(CPACK_PACKAGE_FILE_NAME "SimMasterQt-${APP_VERSION_DISPLAY}-win64")
 if(DEFINED SIMMASTER_CPACK_DIR)
   set(CPACK_PACKAGE_DIRECTORY "${SIMMASTER_CPACK_DIR}")
@@ -148,8 +163,29 @@ if(WIN32)
     # ASCII only in NSIS metadata (UTF-8 here becomes mojibake in Start Menu shortcuts)
     set(CPACK_NSIS_DISPLAY_NAME "SimMasterQt ${APP_VERSION_DISPLAY}")
     set(CPACK_NSIS_PACKAGE_NAME "SimMasterQt ${APP_VERSION_DISPLAY}")
+    # In-place upgrade: kill running exes before copying (see cpack_nsis_include.nsh).
+    # Uninstall-before-install fails when Qt DLLs are still locked by sim_master_qt.
     set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
-    set(CPACK_NSIS_MENU_LINKS "sim_master_qt.exe" "SimMasterQt")
+    # Start Menu shortcut must point at bin\sim_master_qt.exe (the payload lives in bin).
+    set(CPACK_NSIS_MENU_LINKS "bin/sim_master_qt.exe" "SimMasterQt")
 endif()
 
 include(CPack)
+
+# makensis resolves "!include cpack_nsis_include.nsh" against the directory that
+# holds project.nsi inside the CPack staging tree.  Drop the helper there so the
+# packaging step is self-contained (no manual copy, no stale copy on rebuild).
+if(WIN32)
+  if(CMAKE_SIZEOF_VOID_P EQUAL 8)
+    set(_simmaster_cpack_sys "win64")
+  else()
+    set(_simmaster_cpack_sys "win32")
+  endif()
+  set(_simmaster_nsis_stage
+      "${CPACK_PACKAGE_DIRECTORY}/_CPack_Packages/${_simmaster_cpack_sys}/NSIS")
+  file(MAKE_DIRECTORY "${_simmaster_nsis_stage}")
+  configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/cpack_nsis_include.nsh"
+    "${_simmaster_nsis_stage}/cpack_nsis_include.nsh"
+    COPYONLY)
+endif()

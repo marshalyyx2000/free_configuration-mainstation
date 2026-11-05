@@ -185,6 +185,11 @@ QVector<ConnectedDeviceEntry> ConfigGenerator::parseConnectedAps(const QString& 
             }
         }
     }
+    for (ConnectedDeviceEntry& d : devices) {
+        const QString desc = iedDesc.value(d.iedName);
+        if (!desc.isEmpty())
+            d.desc = desc;
+    }
     return dedupeDevices(devices);
 }
 
