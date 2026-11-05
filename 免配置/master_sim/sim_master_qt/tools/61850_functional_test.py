@@ -18,9 +18,23 @@ IED = "E1Q1SB34"
 # E1Q1SB34（母联保护）LD0 无 dsRelayEna，用保护遥信/ brcbRelayDin 做 CLI 与 RCB 测试
 DS_READ = "dsRelayDin"
 RCB_NAME = "brcbRelayDin"
-EXE = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/SimMasterQt/bin/sim_master_qt.exe"
-CLI = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/SimMasterQt/bin/mms_master_cli.exe"
-SMCD = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/SimMasterQt/share/sim_master_qt/station.SMCD"
+def _install_root() -> Path:
+    override = os.environ.get("SIMMASTER_INSTALL_DIR")
+    if override:
+        return Path(override)
+    pf = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "SimMasterQt"
+    legacy = Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/SimMasterQt"
+    if (pf / "bin/sim_master_qt.exe").is_file():
+        return pf
+    if (legacy / "bin/sim_master_qt.exe").is_file():
+        return legacy
+    return pf
+
+
+_INSTALL = _install_root()
+EXE = _INSTALL / "bin/sim_master_qt.exe"
+CLI = _INSTALL / "bin/mms_master_cli.exe"
+SMCD = _INSTALL / "share/sim_master_qt/station.SMCD"
 
 
 @dataclass

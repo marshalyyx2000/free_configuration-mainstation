@@ -2,7 +2,10 @@
 $ErrorActionPreference = "Stop"
 
 $appName = -join ([char]0x514D, [char]0x914D, [char]0x7F6E, [char]0x4EFF, [char]0x771F, [char]0x4E3B, [char]0x7AD9)
-$exe = Join-Path $env:LOCALAPPDATA "Programs\SimMasterQt\bin\sim_master_qt.exe"
+$exe = Join-Path $env:ProgramFiles "SimMasterQt\bin\sim_master_qt.exe"
+if (-not (Test-Path $exe)) {
+    $exe = Join-Path $env:LOCALAPPDATA "Programs\SimMasterQt\bin\sim_master_qt.exe"
+}
 if (-not (Test-Path $exe)) {
     Write-Host "Not installed: $exe"
     exit 1

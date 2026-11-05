@@ -11,7 +11,7 @@ cd 免配置\master_sim\sim_master_qt
 $env:QT6_DIR = "C:\Qt\6.7.3\msvc2019_64"
 .\build_sim_master.ps1 -Configuration Release
 .\build-qt\Release\sim_master_qt.exe
-# 或 .\install_sim_master.ps1 安装到 %LOCALAPPDATA%\Programs\SimMasterQt
+# 或 .\install_sim_master.ps1 安装到 %ProgramFiles%\SimMasterQt（需管理员/UAC）
 ```
 
 一体化窗口 **「免配置仿真主站」**：Tab **运维/下装**（生成、104 下装、等 102、MMS 检测）+ Tab **61850 主站**（全站订阅/事件）。仍可用 Python 后备：`python gui.py`。
