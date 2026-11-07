@@ -65,7 +65,7 @@ $env:QT6_DIR = "C:\Qt\6.7.3\msvc2019_64"
 
 ```powershell
 cd 免配置\master_sim
-git clone --depth 1 --branch v1.5.3 https://github.com/mz-automation/libiec61850.git third_party\libiec61850
+# libiec61850 源码已随仓库提交于 third_party\libiec61850（见其中 VENDOR.md）
 powershell -ExecutionPolicy Bypass -File .\build_libiec61850.ps1
 ```
 

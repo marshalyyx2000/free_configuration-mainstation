@@ -11,13 +11,14 @@
 `reasonForInclusion`，不再丢弃报告；配合 `mms_master_cli.c` 按报告 DatSet 反查正确的 RCB，
 即可在 RptID 复用时仍把报告归属到正确的数据集。
 
-**应用**（在 `master_sim/third_party/libiec61850` 目录，该目录是独立 git 仓库）：
+**应用**（全新 clone 上游 v1.5.3 时；本仓库已 vendored 并含此修改，一般无需再 apply）：
 
 ```powershell
+cd master_sim\third_party\libiec61850
 git apply ..\..\native\patches\libiec61850-report-dataset-size.patch
 ```
 
-应用后再运行 `build_libiec61850.ps1`。如果补丁未应用，构建脚本会给出警告。
+应用后再运行 `build_libiec61850.ps1`。如果补丁未应用，构建脚本会给出警告。详见 `third_party/libiec61850/VENDOR.md`。
 
 > 根本修复在子站侧（`configuration-free/iec61850_router/src/server/config/config_generator.cpp`），
 > 为每个 RCB 生成唯一 RptID；本补丁用于兼容已经部署、仍复用 RptID 的子站。

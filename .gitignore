@@ -1,6 +1,5 @@
 # Nested clones (keep separate)
 免配置/configuration-free/
-免配置/master_sim/third_party/libiec61850/
 
 # Build outputs
 免配置/master_sim/build-win/
