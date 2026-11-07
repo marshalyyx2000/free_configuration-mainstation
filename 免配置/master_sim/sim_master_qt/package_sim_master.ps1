@@ -25,7 +25,11 @@ New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 if (-not $env:QT6_DIR) { $env:QT6_DIR = "C:\Qt\6.7.3\msvc2019_64" }
 
 $buildLib = Join-Path $MasterSim "build_libiec61850.ps1"
-if (Test-Path $buildLib) { & $buildLib | Out-Host }
+# Only (re)build the MMS CLI when it is missing: the vendored libiec61850 build
+# emits CMake deprecation warnings on stderr, which PowerShell turns into a
+# terminating error under $ErrorActionPreference = "Stop".
+$cliBin = Join-Path $MasterSim "bin\mms_master_cli.exe"
+if (-not (Test-Path $cliBin) -and (Test-Path $buildLib)) { & $buildLib | Out-Host }
 
 & (Join-Path $Root "build_sim_master.ps1") -Configuration Release -AppVersion $ver
 
@@ -58,8 +62,21 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 & $cmake --install $BuildDir --config Release --prefix $stage
 $shareStage = Join-Path $stage "share\sim_master_qt"
 New-Item -ItemType Directory -Force -Path $shareStage | Out-Null
+# The share copy is only a fallback for opening a device tree before the first
+# generate-config run; a ~100 MB station model must never be baked into the
+# installer, so skip it above the cap.
+$smcdBundleMaxMb = 24
 foreach ($name in @("IEDList.xml", "station.SMCD")) {
-    Copy-Item -Force (Join-Path $OutDev $name) (Join-Path $shareStage $name)
+    $src = Join-Path $OutDev $name
+    if (-not (Test-Path $src)) { continue }
+    if ($name -eq "station.SMCD") {
+        $mb = (Get-Item $src).Length / 1MB
+        if ($mb -gt $smcdBundleMaxMb) {
+            Write-Host "Skip bundling station.SMCD ($([math]::Round($mb,1)) MB > $smcdBundleMaxMb MB); regenerate on the target machine"
+            continue
+        }
+    }
+    Copy-Item -Force $src (Join-Path $shareStage $name)
 }
 $cliBuilt = Join-Path $MasterSim "bin\mms_master_cli.exe"
 Copy-Item -Force $cliBuilt (Join-Path $stage "bin\mms_master_cli.exe")
@@ -79,8 +96,13 @@ $nsisIncludeSrc = Join-Path $Root "cmake\cpack_nsis_include.nsh"
 New-Item -ItemType Directory -Force -Path $nsisPackDir | Out-Null
 
 Push-Location $BuildDir
-& cpack -C Release
+# cpack writes the makensis failure to stderr; with $ErrorActionPreference=Stop
+# that becomes terminating and skips the makensis fallback below.
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+& cpack -C Release 2>&1 | Out-Host
 $cpackExit = $LASTEXITCODE
+$ErrorActionPreference = $prevEap
 Pop-Location
 if ($cpackExit -ne 0) {
     # CPack wipes NSIS/ before writing project.nsi; include must sit beside project.nsi for makensis.

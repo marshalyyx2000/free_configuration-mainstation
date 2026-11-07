@@ -1,6 +1,8 @@
 #include "ops/station_zip_writer.h"
 
+#include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QtEndian>
 
 extern "C" {
@@ -50,6 +52,14 @@ bool writeDeflatedZipSingleFile(const QString& zipPath, const QString& arcName, 
     const quint32 crc = mz_crc32(0, reinterpret_cast<const unsigned char*>(raw.constData()), raw.size());
     const QByteArray name = arcName.toUtf8();
 
+    // DOS timestamp from the source file. Leaving it at 0 makes the archive
+    // entry show up as 1979/1980 on the device (and in FTP clients).
+    const QDateTime modified = QFileInfo(filePath).lastModified();
+    const QDate d = modified.isValid() ? modified.date() : QDate::currentDate();
+    const QTime t = modified.isValid() ? modified.time() : QTime::currentTime();
+    const quint16 dosTime = qToLittleEndian(quint16((t.hour() << 11) | (t.minute() << 5) | (t.second() / 2)));
+    const quint16 dosDate = qToLittleEndian(quint16(((d.year() - 1980) << 9) | (d.month() << 5) | d.day()));
+
     QFile out(zipPath);
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return false;
@@ -58,8 +68,8 @@ bool writeDeflatedZipSingleFile(const QString& zipPath, const QString& arcName, 
     const quint16 ver = qToLittleEndian(quint16(20));
     const quint16 flags = qToLittleEndian(quint16(0));
     const quint16 method = qToLittleEndian(quint16(8));
-    const quint16 modTime = qToLittleEndian(quint16(0));
-    const quint16 modDate = qToLittleEndian(quint16(0));
+    const quint16 modTime = dosTime;
+    const quint16 modDate = dosDate;
     const quint32 crcLe = qToLittleEndian(crc);
     const quint32 compLe = qToLittleEndian(static_cast<quint32>(compressed.size()));
     const quint32 uncompLe = qToLittleEndian(static_cast<quint32>(raw.size()));
@@ -87,8 +97,8 @@ bool writeDeflatedZipSingleFile(const QString& zipPath, const QString& arcName, 
     const quint16 verNeed = qToLittleEndian(quint16(20));
     const quint16 centFlags = qToLittleEndian(quint16(0));
     const quint16 centMethod = qToLittleEndian(quint16(8));
-    const quint16 centModTime = qToLittleEndian(quint16(0));
-    const quint16 centModDate = qToLittleEndian(quint16(0));
+    const quint16 centModTime = dosTime;
+    const quint16 centModDate = dosDate;
     const quint32 centCrc = crcLe;
     const quint32 centComp = compLe;
     const quint32 centUncomp = uncompLe;

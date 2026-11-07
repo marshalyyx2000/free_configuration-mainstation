@@ -100,8 +100,18 @@ if(EXISTS "${IED_LIST}")
   install(FILES "${IED_LIST}" DESTINATION share/sim_master_qt)
 endif()
 set(SMCD "${CMAKE_CURRENT_LIST_DIR}/../out/station.SMCD")
+# The bundled model is only a fallback for opening a device tree before the
+# first 生成配置. Real stations can reach ~100 MB, which must not end up inside
+# the installer, so skip anything above the cap.
+set(_SMCD_BUNDLE_MAX_MB 24)
 if(EXISTS "${SMCD}")
-  install(FILES "${SMCD}" DESTINATION share/sim_master_qt)
+  file(SIZE "${SMCD}" _SMCD_SIZE)
+  math(EXPR _SMCD_LIMIT "${_SMCD_BUNDLE_MAX_MB} * 1024 * 1024")
+  if(_SMCD_SIZE LESS _SMCD_LIMIT)
+    install(FILES "${SMCD}" DESTINATION share/sim_master_qt)
+  else()
+    message(STATUS "跳过打包 station.SMCD（${_SMCD_SIZE} 字节超过 ${_SMCD_BUNDLE_MAX_MB} MB 上限）")
+  endif()
 endif()
 
 if(WIN32)

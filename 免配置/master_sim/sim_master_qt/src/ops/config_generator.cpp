@@ -5,7 +5,6 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QRegularExpression>
 #include <QXmlStreamReader>
 
 #include <algorithm>
@@ -115,24 +114,38 @@ QString substationIedXml(const QVector<ConnectedDeviceEntry>& devices)
 
 void injectSubstation(const QString& scdPath, const QString& destSmcd, const QVector<ConnectedDeviceEntry>& devices)
 {
-    QFile::copy(scdPath, destSmcd);
-    QFile f(destSmcd);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text))
-        throw std::runtime_error("cannot read SMCD");
-    QString text = QString::fromUtf8(f.readAll());
-    f.close();
-    if (text.contains(QStringLiteral("name=\"SubStation\"")))
-        return;
-    QRegularExpression re(QStringLiteral("<IED\\s"));
-    QRegularExpressionMatch m = re.match(text);
-    if (!m.hasMatch())
-        throw std::runtime_error("SCD 中未找到 <IED>，无法插入 SubStation");
-    const int pos = m.capturedStart();
-    text.insert(pos, substationIedXml(devices));
-    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
-        throw std::runtime_error("cannot write SMCD");
-    f.write(text.toUtf8());
-    f.close();
+    // QFile::copy() fails when the destination already exists. A station.SMCD
+    // left over from a previous run therefore survived silently, so the new SCD
+    // never reached the device: IEDList.xml described the new station while
+    // station.zip still shipped the old (much smaller) model.
+    if (QFileInfo::exists(destSmcd) && !QFile::remove(destSmcd))
+        throw std::runtime_error(
+            QStringLiteral("无法覆盖旧的 station.SMCD: %1").arg(destSmcd).toUtf8().constData());
+
+    QFile in(scdPath);
+    if (!in.open(QIODevice::ReadOnly))
+        throw std::runtime_error(
+            QStringLiteral("无法读取 SCD: %1").arg(scdPath).toUtf8().constData());
+    // Binary on purpose: the SCD may be ~100 MB and its element order, entity
+    // escaping and line endings must survive byte for byte for genconfig.jar.
+    QByteArray data = in.readAll();
+    in.close();
+
+    if (!data.contains("name=\"SubStation\"")) {
+        const int pos = data.indexOf("<IED ");
+        if (pos < 0)
+            throw std::runtime_error("SCD 中未找到 <IED>，无法插入 SubStation");
+        data.insert(pos, substationIedXml(devices).toUtf8());
+    }
+
+    QFile out(destSmcd);
+    if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate))
+        throw std::runtime_error(
+            QStringLiteral("无法写入 station.SMCD: %1").arg(destSmcd).toUtf8().constData());
+    if (out.write(data) != data.size())
+        throw std::runtime_error(
+            QStringLiteral("写入 station.SMCD 不完整: %1").arg(destSmcd).toUtf8().constData());
+    out.close();
 }
 
 } // namespace
@@ -213,6 +226,18 @@ QVector<ConnectedDeviceEntry> ConfigGenerator::generate(const QString& scdPath, 
 
     const QString smcdPath = QDir(outDirPath).absoluteFilePath(QStringLiteral("station.SMCD"));
     injectSubstation(scdPath, smcdPath, devices);
+
+    // Guard against a stale/short model: the SMCD is the SCD plus the injected
+    // SubStation IED, so it can never be smaller than the source file.
+    const qint64 scdSize = QFileInfo(scdPath).size();
+    const qint64 smcdSize = QFileInfo(smcdPath).size();
+    if (smcdSize < scdSize)
+        throw std::runtime_error(
+            QStringLiteral("station.SMCD 大小异常（%1 < SCD %2），疑似未覆盖旧文件")
+                .arg(smcdSize)
+                .arg(scdSize)
+                .toUtf8()
+                .constData());
 
     const QString zipPath = QDir(outDirPath).absoluteFilePath(QStringLiteral("station.zip"));
     if (!writeDeflatedZipSingleFile(zipPath, QStringLiteral("station.SMCD"), smcdPath))
