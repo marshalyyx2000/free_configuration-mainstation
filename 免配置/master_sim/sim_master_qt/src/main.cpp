@@ -1,11 +1,14 @@
 #include "scd/scd_model.h"
+#include "settings/shared_connection_settings.h"
 #include "util/app_paths.h"
 #include "event/event_store.h"
+#include "event/event_format.h"
 #include "event/report_event_logic.h"
 #include "ops/config_generator.h"
 #include "ops/lab_operations.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
 
@@ -42,15 +45,21 @@ static bool runVerifySelfTest()
     if (!runReportEventSelfTest(model, store))
         return false;
     {
-        const IedModel* im = model.modelFor(QStringLiteral("E1Q1SB20"));
-        if (im && !im->desc.isEmpty() && im->desc != QStringLiteral("E1Q1SB20")) {
+        // Device descriptions must reach the device list. The concrete IED name is
+        // station specific (the shipped model may be any SCD), so probe whatever
+        // device the loaded SMCD actually contains.
+        for (const IedDeviceEntry& dev : model.devices()) {
+            const IedModel* im = model.modelFor(dev.iedName);
+            if (!im || im->desc.isEmpty() || im->desc == dev.iedName)
+                continue;
             bool labeled = false;
             for (const IedDeviceEntry& d : model.devices()) {
-                if (d.iedName == QStringLiteral("E1Q1SB20") && d.desc == im->desc)
+                if (d.iedName == dev.iedName && d.desc == im->desc)
                     labeled = true;
             }
             if (!labeled)
                 return false;
+            break;
         }
     }
 
@@ -70,6 +79,43 @@ static bool runVerifySelfTest()
             subscribedOtherRcb = true;
     }
     if (modelHasOtherRcb && !subscribedOtherRcb)
+        return false;
+
+    {
+        // Any event written by the report self-test is enough to exercise the
+        // per-IED filter; take the last one instead of naming a fixed device.
+        const QVector<StationEvent> all = store.snapshot();
+        if (all.isEmpty())
+            return false;
+        const QString probeIed = all.last().iedName;
+        const QVector<StationEvent> iedEvents = store.snapshotForIed(probeIed);
+        if (iedEvents.isEmpty())
+            return false;
+        for (const StationEvent& e : iedEvents) {
+            if (e.iedName != probeIed)
+                return false;
+        }
+        if (!store.snapshotForIed(QStringLiteral("NOT_EXIST_DEV")).isEmpty())
+            return false;
+        if (!store.snapshotForIed(QString()).isEmpty())
+            return false;
+        if (StationEventCategory::datasetRead() != QStringLiteral("召唤")
+            || StationEventCategory::datasetReadDone() != QStringLiteral("召唤完成"))
+            return false;
+        StationEvent readEv;
+        readEv.time = QDateTime::currentDateTime();
+        readEv.category = StationEventCategory::datasetRead();
+        readEv.iedName = QStringLiteral("E1Q1SB41");
+        readEv.iedDesc = QStringLiteral("test");
+        readEv.pointName = QStringLiteral("召唤数据集");
+        readEv.address = QStringLiteral("E1Q1SB41PROT/LLN0$dsDin1");
+        const QString det = stationEventDetailText(readEv);
+        if (!det.contains(StationEventCategory::datasetRead()) || det.contains(QStringLiteral("前值")))
+            return false;
+    }
+
+    SharedConnectionSettings conn;
+    if (conn.linkWatchSec() < 30 || conn.stationGiSec() < 60)
         return false;
     return true;
 }

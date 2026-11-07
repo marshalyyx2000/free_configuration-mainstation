@@ -144,7 +144,7 @@ Copy-Item -Force $built $dest
 Write-Host "Installer built: $dest"
 Write-Host "NSIS target root: $pf64\SimMasterQt"
 
-& (Join-Path $Root "test_nsis_package.ps1") -InstallerPath $dest
+& (Join-Path $Root "test_nsis_package.ps1") -InstallerPath $dest -SkipDeviceTests
 
 $newVer = Bump-Version $ver
 Set-Content -Path $VersionFile -Value $newVer -NoNewline

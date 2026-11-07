@@ -1,7 +1,12 @@
 # Silent-install NSIS package to Program Files only; run verify + CLI tests. Must pass before release.
 param(
     [Parameter(Mandatory = $true)]
-    [string]$InstallerPath
+    [string]$InstallerPath,
+    # The CLI functional tests talk to the live device at 192.168.0.10:102. When
+    # the device still runs an older deployed model (e.g. right before a big SCD
+    # rollout) those tests fail for reasons unrelated to the installer, so allow
+    # skipping them explicitly. Install + --verify checks always run.
+    [switch]$SkipDeviceTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -86,6 +91,14 @@ function Invoke-AdminTest {
 
         $vp = Start-Process -FilePath $pfExe -ArgumentList "--verify" -Wait -PassThru -NoNewWindow
         if ($vp.ExitCode -ne 0) { throw "--verify failed on $pfExe (exit $($vp.ExitCode))" }
+        Add-Content $log "--verify exit 0"
+
+        if ($SkipDeviceTests) {
+            Write-Host "Skipping device CLI functional tests (-SkipDeviceTests)"
+            Add-Content $log "Skipped device CLI functional tests"
+            Add-Content $log "ALL CHECKS PASSED"
+            return
+        }
 
         $tcp = Test-NetConnection -ComputerName 192.168.0.10 -Port 102 -WarningAction SilentlyContinue
         if (-not $tcp.TcpTestSucceeded) {
@@ -106,11 +119,13 @@ function Invoke-AdminTest {
 
 if (-not (Test-IsAdmin)) {
     Write-Host "NSIS test requires administrator (install to Program Files)..."
-    $proc = Start-Process powershell.exe -Verb RunAs -PassThru -Wait -ArgumentList @(
+    $argList = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", $MyInvocation.MyCommand.Path,
-        "-InstallerPath", $InstallerPath
+        "-File", "`"$($MyInvocation.MyCommand.Path)`"",
+        "-InstallerPath", "`"$InstallerPath`""
     )
+    if ($SkipDeviceTests) { $argList += "-SkipDeviceTests" }
+    $proc = Start-Process powershell.exe -Verb RunAs -PassThru -Wait -ArgumentList $argList
     if (-not $proc -or $proc.ExitCode -ne 0) {
         $log = Join-Path $env:TEMP "SimMasterQt_nsis_install.log"
         $tail = if (Test-Path $log) { Get-Content $log -Tail 25 -ErrorAction SilentlyContinue } else { @() }

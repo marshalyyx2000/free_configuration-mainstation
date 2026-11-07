@@ -86,13 +86,39 @@ void ingestMmsReportEvent(ScdModelLoader& model, EventStore& store, QHash<QStrin
 
 bool runReportEventSelfTest(ScdModelLoader& model, EventStore& store)
 {
-    const QString ied = QStringLiteral("E1Q1SB41");
+    // Pick the device under test from the loaded model instead of hard-coding an
+    // IED name: the shipped station.SMCD may come from any SCD (the old 30-device
+    // station or a ~100 MB station with hundreds of devices). Prefer a device that
+    // has a RelayEna report, fall back to the first device with any report.
+    QString ied;
+    const ReportEntry* rptPick = nullptr;
+    for (const IedDeviceEntry& dev : model.devices()) {
+        const IedModel* m = model.modelFor(dev.iedName);
+        if (!m || m->reports.isEmpty())
+            continue;
+        if (ied.isEmpty()) {
+            ied = dev.iedName;
+            rptPick = &m->reports.first();
+        }
+        for (const ReportEntry& r : m->reports) {
+            if (r.name.contains(QStringLiteral("RelayEna"), Qt::CaseInsensitive)) {
+                ied = dev.iedName;
+                rptPick = &r;
+                break;
+            }
+        }
+        if (rptPick && rptPick->name.contains(QStringLiteral("RelayEna"), Qt::CaseInsensitive))
+            break;
+    }
+    if (ied.isEmpty() || !rptPick)
+        return false;
+
     const IedModel* im = model.modelFor(ied);
     if (!im)
         return false;
     const ReportEntry* rpt = nullptr;
     for (const ReportEntry& r : im->reports) {
-        if (r.name.contains(QStringLiteral("RelayEna"), Qt::CaseInsensitive)) {
+        if (r.name == rptPick->name) {
             rpt = &r;
             break;
         }
@@ -104,6 +130,10 @@ bool runReportEventSelfTest(ScdModelLoader& model, EventStore& store)
         return false;
     if (!ScdModelLoader::findReportForHandler(im, rcb))
         return false;
+    const DataSetEntry* ds = ScdModelLoader::findDataset(im, rpt->datSet, rpt->ldInst);
+    const QString pointRef = ds && !ds->members.isEmpty()
+        ? ds->members.first().address
+        : ied + QStringLiteral("PROT/LLN0.ST.FuncEna3");
 
     if (shouldSkipReportEventItem(QStringLiteral("true"), QStringLiteral("true"), 1))
         return false;
@@ -118,8 +148,8 @@ bool runReportEventSelfTest(ScdModelLoader& model, EventStore& store)
         { QStringLiteral("items"),
             QJsonArray{
                 QJsonObject{
-                    { QStringLiteral("idx"), 3 },
-                    { QStringLiteral("name"), QStringLiteral("E1Q1SB41PROT/LLN0.ST.FuncEna3") },
+                    { QStringLiteral("idx"), 0 },
+                    { QStringLiteral("name"), pointRef },
                     { QStringLiteral("reason"), 1 },
                     { QStringLiteral("value"), true },
                 },
