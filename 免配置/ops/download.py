@@ -14,15 +14,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "master_sim"))
 
 from iec104_client import Iec104MaintainClient, Maintain104Config  # noqa: E402
 
-OUT = Path(__file__).resolve().parents[1] / "master_sim" / "out"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from resolve_out_dir import resolve_out_dir, warn_if_lab_ledger  # noqa: E402
+
+OUT = resolve_out_dir()
 
 
 def main() -> int:
     host = sys.argv[1] if len(sys.argv) > 1 else "192.168.0.10"
     port = int(sys.argv[2]) if len(sys.argv) > 2 else 2405
 
+    warn_if_lab_ledger(OUT)
     ied = (OUT / "IEDList.xml").read_bytes()
     zipp = (OUT / "station.zip").read_bytes()
+    print(f"输出目录: {OUT}")
     print(f"IEDList.xml {len(ied)} B, station.zip {len(zipp)} B")
 
     client = Iec104MaintainClient(Maintain104Config(host=host, port=port, timeout=60.0))

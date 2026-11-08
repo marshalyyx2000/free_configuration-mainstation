@@ -170,6 +170,10 @@ StationEventListWidget::StationEventListWidget(EventStore* store, QWidget* paren
     connect(m_mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &StationEventListWidget::onFilterChanged);
     if (m_store)
         connect(m_store, &EventStore::eventAppended, this, [this]() {
+            if (!isVisible()) {
+                m_dirty = true;
+                return;
+            }
             if (!m_refreshTimer) {
                 m_refreshTimer = new QTimer(this);
                 m_refreshTimer->setSingleShot(true);
@@ -181,8 +185,27 @@ StationEventListWidget::StationEventListWidget(EventStore* store, QWidget* paren
     refreshView();
 }
 
+void StationEventListWidget::setIedFilter(const QString& iedName)
+{
+    if (m_iedFilter == iedName)
+        return;
+    m_iedFilter = iedName;
+    m_dirty = false;
+    refreshView();
+}
+
+void StationEventListWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (m_dirty) {
+        m_dirty = false;
+        refreshView();
+    }
+}
+
 void StationEventListWidget::refreshView()
 {
+    m_dirty = false;
     rebuildFiltered();
 }
 
@@ -196,10 +219,16 @@ void StationEventListWidget::rebuildFiltered()
     const QString query = m_search->text();
     const ViewMode mode = static_cast<ViewMode>(m_mode->currentData().toInt());
     m_stack->setCurrentIndex(mode);
+    m_table->setColumnHidden(2, !m_iedFilter.isEmpty());
 
-    QVector<StationEvent> all = m_store ? m_store->snapshot() : QVector<StationEvent>();
+    QVector<StationEvent> all;
+    if (m_store) {
+        all = m_iedFilter.isEmpty() ? m_store->snapshot() : m_store->snapshotForIed(m_iedFilter);
+    }
     m_filtered.clear();
     for (int i = all.size() - 1; i >= 0; --i) {
+        if (!m_iedFilter.isEmpty() && all[i].iedName != m_iedFilter)
+            continue;
         if (matchesMultiSegmentSearch(all[i].searchText(), query))
             m_filtered.append(all[i]);
     }

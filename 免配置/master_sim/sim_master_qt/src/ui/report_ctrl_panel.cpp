@@ -1,6 +1,7 @@
 #include "ui/report_ctrl_panel.h"
 
 #include "mms/mms_client_bridge.h"
+#include "event/event_format.h"
 
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -159,7 +160,7 @@ void ReportCtrlPanel::rebuildUpper()
         row.buffered = rpt.buffered;
         row.ldInst = rpt.ldInst;
         row.handlerRef = ScdModelLoader::rcbHandlerRef(m_dev.iedName, rpt.name, rpt.buffered, rpt.ldInst);
-        row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, m_dev.rptno, rpt.buffered, rpt.ldInst);
+        row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, QStringLiteral("1"), rpt.buffered, rpt.ldInst);
         m_rows.append(row);
 
         const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, rpt.datSet, rpt.ldInst);
@@ -335,6 +336,7 @@ void ReportCtrlPanel::onReadCurrentDataset()
     }
     m_pendingDsReq = row.dsRef;
     emit logLine(tr("召唤数据集 %1").arg(row.dsRef));
+    emit deviceEvent(StationEventCategory::datasetRead(), row.dsRef, tr("召唤数据集"));
     m_mms->readDataSet(row.dsRef, row.dsRef);
 }
 
@@ -434,6 +436,9 @@ void ReportCtrlPanel::onReadAllDeviceDatasets()
     m_bulkDone = 0;
     m_bulkActive = true;
     m_bulkAwaitingResponse = false;
+    emit deviceEvent(StationEventCategory::datasetRead(),
+        QStringLiteral("@%1").arg(m_dev.iedName),
+        tr("召唤全装置数据集（%1 个）").arg(m_bulkTotal));
     m_bulkProg = new QProgressDialog(tr("正在读取 %1 的数据集…").arg(m_dev.iedName), tr("取消"), 0, m_bulkTotal, this);
     m_bulkProg->setWindowModality(Qt::WindowModal);
     m_bulkProg->setMinimumDuration(0);
@@ -492,10 +497,17 @@ void ReportCtrlPanel::onBulkStepDone(bool stopAfter)
 
 void ReportCtrlPanel::finishBulkRead()
 {
+    const bool wasActive = m_bulkActive;
+    const int done = m_bulkDone;
+    const int total = m_bulkTotal;
     m_bulkActive = false;
     m_bulkAwaitingResponse = false;
     m_bulkQueue.clear();
     m_pendingDsReq.clear();
+    if (wasActive && done > 0) {
+        emit deviceEvent(StationEventCategory::datasetReadDone(), QStringLiteral("@%1").arg(m_dev.iedName),
+            tr("全装置数据集召唤完成：%1/%2").arg(done).arg(total));
+    }
     if (m_bulkProg) {
         disconnect(m_bulkProg, nullptr, this, nullptr);
         m_bulkProg->close();
@@ -555,6 +567,9 @@ void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
         const int rowCount = evt.value(QStringLiteral("rows")).toArray().size();
         if (ownsDataSetRef(ref) && currentRow().dsRef == ref)
             emit logLine(tr("召唤完成 %1，共 %2 条").arg(ref).arg(rowCount));
+        if (ownsDataSetRef(ref))
+            emit deviceEvent(StationEventCategory::datasetReadDone(), ref,
+                tr("召唤完成，共 %1 条").arg(rowCount));
         if (currentRow().dsRef == ref)
             fillLowerFromJson(evt);
         return;

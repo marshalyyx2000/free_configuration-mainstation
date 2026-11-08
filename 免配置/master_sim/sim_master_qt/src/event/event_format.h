@@ -16,6 +16,8 @@ QString rcbSubscribe();
 QString rcbGi();
 QString rcbUnsubscribe();
 QString giReport();
+QString datasetRead();
+QString datasetReadDone();
 QString linkUp();
 QString linkDown();
 } // namespace StationEventCategory

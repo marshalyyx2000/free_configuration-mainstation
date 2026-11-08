@@ -27,6 +27,7 @@ public slots:
     void triggerGi(const QString& handlerRef);
     void readCommState();
     void listFiles(const QString& path, const QString& requestId);
+    void ping();
 
 signals:
     void eventReceived(const QJsonObject& evt);

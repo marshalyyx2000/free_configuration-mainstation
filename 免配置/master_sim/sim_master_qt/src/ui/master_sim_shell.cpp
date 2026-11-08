@@ -2,6 +2,8 @@
 #include "ui/mms_master_widget.h"
 #include "ui/ops_deploy_widget.h"
 #include "ui/lab_worker.h"
+
+#include <QMetaObject>
 #include "settings/shared_connection_settings.h"
 
 #include <QAction>
@@ -14,6 +16,7 @@
 #include <QSettings>
 #include <QTabWidget>
 #include <QThread>
+#include <QTimer>
 
 MasterSimShell::MasterSimShell(QWidget* parent)
     : QMainWindow(parent)
@@ -80,9 +83,20 @@ MasterSimShell::MasterSimShell(QWidget* parent)
         }
     });
 
-    connect(m_ops, &OpsDeployWidget::requestJob, m_worker, &LabWorker::runJob, Qt::QueuedConnection);
+    connect(m_ops, &OpsDeployWidget::requestJob, this, [this](LabJobKind kind) {
+        if (kind == LabJobKind::Generate || kind == LabJobKind::FullPipeline)
+            m_mms->prepareForConfigGeneration();
+        QMetaObject::invokeMethod(m_worker, "runJob", Qt::QueuedConnection, Q_ARG(LabJobKind, kind));
+    });
     connect(m_ops, &OpsDeployWidget::modelOutputsChanged, m_mms, &MmsMasterWidget::reloadModelData);
     connect(m_worker, &LabWorker::modelOutputsChanged, m_mms, &MmsMasterWidget::reloadModelData);
+
+    QTimer::singleShot(0, this, [this]() {
+        if (m_ops)
+            m_ops->syncConnectionFieldsToSettings();
+        if (m_mms)
+            m_mms->connectSubstation();
+    });
 }
 
 bool MasterSimShell::runSelfTest()

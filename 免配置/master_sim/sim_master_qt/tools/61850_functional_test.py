@@ -12,12 +12,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-HOST = "192.168.0.10"
-PORT = 102
-IED = "E1Q1SB34"
-# E1Q1SB34（母联保护）LD0 无 dsRelayEna，用保护遥信/ brcbRelayDin 做 CLI 与 RCB 测试
+HOST = os.environ.get("SIMMASTER_TEST_HOST", "192.168.0.10")
+PORT = int(os.environ.get("SIMMASTER_TEST_PORT", "102"))
+# 默认在 run_cli_tests 开头按子站实模探测；可用环境变量覆盖
+IED = ""
+TEST_LD = ""
 DS_READ = "dsRelayDin"
 RCB_NAME = "brcbRelayDin"
+RCB_INST = "01"
 def _install_root() -> Path:
     override = os.environ.get("SIMMASTER_INSTALL_DIR")
     if override:
@@ -28,7 +30,12 @@ def _install_root() -> Path:
 
 _INSTALL = _install_root()
 EXE = _INSTALL / "bin/sim_master_qt.exe"
-CLI = _INSTALL / "bin/mms_master_cli.exe"
+_cli_override = os.environ.get("SIMMASTER_CLI")
+if _cli_override:
+    CLI = Path(_cli_override)
+else:
+    _ws_cli = Path(__file__).resolve().parents[2] / "bin" / "mms_master_cli.exe"
+    CLI = _ws_cli if _ws_cli.is_file() else _INSTALL / "bin/mms_master_cli.exe"
 SMCD = _INSTALL / "share/sim_master_qt/station.SMCD"
 
 
@@ -56,10 +63,30 @@ class TestRun:
         self.cases.append(CaseResult(**kwargs))
 
 
+MMS_TIMEOUT_MS = int(os.environ.get("SIMMASTER_MMS_TIMEOUT_MS", "180000"))
+
+
+def _with_mms_timeout(cmd: dict[str, Any]) -> dict[str, Any]:
+    out = dict(cmd)
+    if cmd.get("cmd") in ("connect", "read_comm_state", "read_dataset", "enable_rcb", "get_ld_list", "get_datasets"):
+        out.setdefault("timeoutMs", MMS_TIMEOUT_MS)
+    return out
+
+
 def run_cli_session(commands: list[str], timeout_sec: float = 120.0) -> tuple[list[str], int, float]:
     if not CLI.is_file():
         return [f"missing {CLI}"], 1, 0.0
-    payload = "\n".join(commands) + "\n"
+    norm: list[str] = []
+    for c in commands:
+        try:
+            obj = json.loads(c)
+            if isinstance(obj, dict):
+                norm.append(json.dumps(_with_mms_timeout(obj), ensure_ascii=False))
+                continue
+        except json.JSONDecodeError:
+            pass
+        norm.append(c)
+    payload = "\n".join(norm) + "\n"
     t0 = time.perf_counter()
     proc = subprocess.run(
         [str(CLI)],
@@ -88,7 +115,72 @@ def cli_errors(lines: list[str]) -> list[str]:
     return out
 
 
+def _parse_events(lines: list[str]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for ln in lines:
+        try:
+            out.append(json.loads(ln))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
+def discover_cli_targets() -> tuple[str, str, str, str, str]:
+    """返回 ied_name, ld_full, ds, rcb, inst。"""
+    env_ied = os.environ.get("SIMMASTER_TEST_IED")
+    if env_ied:
+        ld = os.environ.get("SIMMASTER_TEST_LD", f"{env_ied}PROT")
+        ds = os.environ.get("SIMMASTER_TEST_DS", "dsRelayDin")
+        rcb = os.environ.get("SIMMASTER_TEST_RCB", "brcbRelayDin")
+        inst = os.environ.get("SIMMASTER_TEST_RCB_INST", "01")
+        return env_ied, ld, ds, rcb, inst
+
+    lines, _, _ = run_cli_session(
+        [
+            json.dumps({"cmd": "connect", "host": HOST, "port": PORT}, ensure_ascii=False),
+            json.dumps({"cmd": "get_ld_list"}, ensure_ascii=False),
+            json.dumps({"cmd": "quit"}, ensure_ascii=False),
+        ]
+    )
+    lds: list[str] = []
+    for ev in _parse_events(lines):
+        if ev.get("evt") == "ld_list":
+            lds = list(ev.get("devices") or [])
+    preferred = [x for x in lds if x.startswith("P_") and "PROT" in x]
+    pool = preferred or [x for x in lds if "PROT" in x] or lds
+    ds_rcb_map = (
+        ("dsRelayDin1", "brcbRelayDin"),
+        ("dsRelayDin", "brcbRelayDin"),
+        ("dsWarning", "brcbWarning"),
+        ("dsRelayEna", "brcbRelayEna"),
+        ("dsDin", "brcbDin"),
+    )
+    for ld in pool[:40]:
+        lines, _, _ = run_cli_session(
+            [
+                json.dumps({"cmd": "connect", "host": HOST, "port": PORT}, ensure_ascii=False),
+                json.dumps({"cmd": "get_datasets", "ld": ld}, ensure_ascii=False),
+                json.dumps({"cmd": "quit"}, ensure_ascii=False),
+            ]
+        )
+        names: list[str] = []
+        for ev in _parse_events(lines):
+            if ev.get("evt") == "datasets" and ev.get("ld") == ld:
+                names = list(ev.get("names") or [])
+        for ds, rcb in ds_rcb_map:
+            if ds in names:
+                if ld.endswith("PROT"):
+                    ied = ld[: -len("PROT")]
+                elif ld.endswith("LD0"):
+                    ied = ld[: -len("LD0")]
+                else:
+                    ied = ld.split("/")[0] if "/" in ld else ld
+                return ied, ld, ds, rcb, "01"
+    return "P_X5071A", "P_X5071APROT", "dsRelayDin1", "brcbRelayDin", "01"
+
+
 def run_cli_tests(run: TestRun) -> None:
+    global IED, TEST_LD, DS_READ, RCB_NAME, RCB_INST
     run.exe = str(EXE)
     run.cli = str(CLI)
 
@@ -111,7 +203,8 @@ def run_cli_tests(run: TestRun) -> None:
         log_snippet="\n".join(lines[:8]),
     )
     time.sleep(1)
-    ds_ref = f"{IED}LD0/LLN0${DS_READ}"
+    IED, TEST_LD, DS_READ, RCB_NAME, RCB_INST = discover_cli_targets()
+    ds_ref = f"{TEST_LD}/LLN0${DS_READ}"
     lines, code, ms = run_cli_session(
         [
             json.dumps({"cmd": "connect", "host": HOST, "port": PORT}, ensure_ascii=False),
@@ -129,8 +222,8 @@ def run_cli_tests(run: TestRun) -> None:
         log_snippet="\n".join(lines[-6:]),
     )
     time.sleep(1)
-    handler = f"{IED}LD0/LLN0$BR${RCB_NAME}"
-    get_ref = f"{handler}09"
+    handler = f"{TEST_LD}/LLN0$BR${RCB_NAME}"
+    get_ref = f"{handler}{RCB_INST}"
     lines, code, ms = run_cli_session(
         [
             json.dumps({"cmd": "connect", "host": HOST, "port": PORT}, ensure_ascii=False),
@@ -180,13 +273,8 @@ def run_cli_tests(run: TestRun) -> None:
         log_snippet="\n".join(lines[-5:]),
     )
 
-    bulk_refs = [
-        f"{IED}LD0/LLN0$dsRelayDin",
-        f"{IED}LD0/LLN0$dsAlarm",
-        f"{IED}LD0/LLN0$dsWarning",
-        f"{IED}LD0/LLN0$dsAin",
-        f"{IED}LD0/LLN0$dsDeviceState",
-    ]
+    bulk_refs = [f"{TEST_LD}/LLN0$dsRelayDin", f"{TEST_LD}/LLN0$dsAlarm", f"{TEST_LD}/LLN0$dsWarning"]
+    bulk_refs += [f"{TEST_LD}/LLN0$dsAin", f"{TEST_LD}/LLN0$dsDeviceState"]
     cmds = [json.dumps({"cmd": "connect", "host": HOST, "port": PORT}, ensure_ascii=False)]
     for ref in bulk_refs:
         cmds.append(json.dumps({"cmd": "read_dataset", "ref": ref}, ensure_ascii=False))

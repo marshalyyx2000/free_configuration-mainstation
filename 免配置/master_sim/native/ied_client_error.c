@@ -55,6 +55,10 @@ const char* ied_error_message(IedClientError error)
         return "MALFORMED_MESSAGE";
     case IED_ERROR_OK:
         return "OK";
+    case IED_ERROR_SERVICE_NOT_IMPLEMENTED:
+        return "SERVICE_NOT_IMPLEMENTED";
+    case IED_ERROR_UNKNOWN:
+        return "IED_UNKNOWN";
     default:
         return "UNKNOWN";
     }

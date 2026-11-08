@@ -1,6 +1,8 @@
 """仿真主站实验室操作（供 CLI / GUI 共用）。"""
 from __future__ import annotations
 
+import os
+import re
 import socket
 import subprocess
 import sys
@@ -10,13 +12,14 @@ from typing import Callable
 
 from build_config import DEFAULT_SCD, OUT_DIR, generate
 from iec104_client import Iec104MaintainClient, Maintain104Config
+from mms_client import comm_state_entry_count
 
 ROOT = Path(__file__).resolve().parent
 LogFn = Callable[[str], None]
 
-# 装置侧 genconfig + 模型装载（RK3568 实测，约 15 MB 站级模型）
-GENCONFIG_HINT_SEC = 120
-GENCONFIG_HINT_TEXT = "约 2 分钟内（含 genconfig.jar + 装载 supervision.cfg）"
+# 装置侧 genconfig + 模型装载（大站需加速 genconfig.jar，见 ops/deploy_genconfig_fast.py）
+GENCONFIG_HINT_SEC = 90
+GENCONFIG_HINT_TEXT = "约 1 分钟内（加速 genconfig.jar + 装载 supervision.cfg；首次请 deploy_genconfig_fast）"
 
 
 def _noop(_: str) -> None:
@@ -88,34 +91,99 @@ class StepTimer:
         self.log(f"  · 合计: {format_duration(total)}")
 
 
+def ied_list_device_count(out: Path) -> int:
+    text = (out / "IEDList.xml").read_text(encoding="utf-8", errors="replace")
+    return len(re.findall(r"<Device\b", text))
+
+
+def log_ied_list_subnets(out: Path, log: LogFn = _noop) -> None:
+    text = (out / "IEDList.xml").read_text(encoding="utf-8", errors="replace")
+    n10 = text.count("10.100.100.")
+    n172 = text.count("172.16.")
+    n = ied_list_device_count(out)
+    log(f"本地下装台账: {n} 台装置；ch_para 含 172.16.x={n172}、10.100.100.x={n10}")
+    if n10 >= 5 and n172 == 0:
+        log(
+            "警告: 台账仍是 10.100.100 仿真网段，江西站请先在 GUI 对最新 SCD 点「生成配置」，"
+            "勿用 master_sim/out 里旧的 26579 台账下装"
+        )
+
+
+def maybe_reload_stale_router(host: str, log: LogFn = _noop) -> bool:
+    """102 在旧 router 上常不随 ASDU 生效退出；有 SUBST_PASS 时调用 ops/reload_61850_router.py。"""
+    if not os.environ.get("SUBST_PASS"):
+        log(
+            "装置 102 未关闭（旧 router 未退出），无法自动装载新台账。"
+            "请设置 SUBST_PASS 后运行: python 免配置/ops/reload_61850_router.py"
+        )
+        return False
+    script = ROOT.parent / "ops" / "reload_61850_router.py"
+    log("尝试通过 SSH 结束旧 router 并重新生效 …")
+    r = subprocess.run(
+        [sys.executable, str(script)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if r.stdout:
+        log(r.stdout.strip())
+    if r.stderr:
+        log(r.stderr.strip())
+    return r.returncode == 0
+
+
+def verify_comm_state_count(
+    host: str, expected: int, mms_port: int = 102, log: LogFn = _noop
+) -> bool:
+    count = comm_state_entry_count(host, mms_port)
+    if count is None:
+        log("无法读取 dsCommState 条目数（mms_master_cli 不可用或连接失败）")
+        return False
+    log(f"装置 dsCommState 条目: {count}（台账装置数 {expected}）")
+    if count != expected:
+        log(
+            "台账未在运行中的 router 生效：仍为旧通信工况。"
+            "请执行 reload_61850_router.py 或手动 kill iec61850router 后再次生效"
+        )
+        return False
+    return True
+
+
 def wait_for_mms_port(
     host: str = "192.168.0.10",
     port: int = 102,
     timeout_sec: float = 20 * 60,
     poll_sec: float = 5.0,
     log: LogFn = _noop,
+    out: Path | None = None,
 ) -> float | None:
     """轮询直至 MMS 端口监听，返回从调用起的耗时秒数；超时返回 None。
 
     若一开始 102 已通，说明旧进程未退出，计时无意义：先等到端口关闭，
     再从关闭时刻起重新计时，直到再次监听。
     """
-    model = format_mb(model_size_bytes())
+    model = format_mb(model_size_bytes(out))
     already_up = tcp_reachable(host, port, timeout=2.0)
     if already_up:
         log(
             f"注意: {host}:{port} 此刻已通，多半是旧 router 未退出；"
             f"先等 102 关闭后再计 genconfig/装载（模型 {model}）…"
         )
-        drop_deadline = time.monotonic() + 90
+        drop_deadline = time.monotonic() + 600
         while time.monotonic() < drop_deadline and tcp_reachable(host, port, timeout=1.5):
-            time.sleep(1.0)
+            time.sleep(2.0)
         if tcp_reachable(host, port, timeout=1.5):
-            log(
-                "102 一直未关闭，本次「装置耗时」会接近 0，不能代表 genconfig。"
-                "请先在装置上删除 supervision.cfg/.stamp 并 kill iec61850router 后再测。"
-            )
-            return 0.0
+            if maybe_reload_stale_router(host, log):
+                drop_deadline = time.monotonic() + 600
+                while time.monotonic() < drop_deadline and tcp_reachable(host, port, timeout=1.5):
+                    time.sleep(2.0)
+            if tcp_reachable(host, port, timeout=1.5):
+                log(
+                    "102 一直未关闭，新 IEDList/SMCD 未装载。"
+                    "请 kill iec61850router 并清除 supervision 缓存后再次「下装并生效」。"
+                )
+                return None
         log("102 已关闭，开始计时等待重新生成/装载…")
 
     t0 = time.monotonic()
@@ -176,6 +244,8 @@ def run_upload(
 
     ied = ied_path.read_bytes()
     zipp = zip_path.read_bytes()
+    expected_devices = ied_list_device_count(out)
+    log_ied_list_subnets(out, log)
     model_mb = format_mb(model_size_bytes(out))
     timer = StepTimer(log)
 
@@ -213,9 +283,10 @@ def run_upload(
     elapsed: float | None = None
     if wait_genconfig:
         t_wait = time.monotonic()
-        elapsed = wait_for_mms_port(host=host, port=mms_port, log=log)
+        elapsed = wait_for_mms_port(host=host, port=mms_port, log=log, out=out)
         if elapsed is not None:
             timer.add(f"装置 genconfig.jar+装载（至 102，模型 {model_mb}）", elapsed)
+            verify_comm_state_count(host, expected_devices, mms_port, log)
         else:
             timer.add("装置 genconfig.jar+装载（超时未开 102）", time.monotonic() - t_wait)
 

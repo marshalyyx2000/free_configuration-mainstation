@@ -56,7 +56,7 @@ const char* ied_error_message(IedClientError error);
 #define MAX_DS_ITEMS 512
 #define ITEM_LEN 128
 #define CONNECT_TIMEOUT_MS 10000
-#define REQUEST_TIMEOUT_MS 4000
+#define REQUEST_TIMEOUT_MS 60000
 #define FILE_REQUEST_TIMEOUT_MS 15000
 
 static IedConnection g_con = NULL;
@@ -95,6 +95,17 @@ static void emit_error(const char* msg) {
     fflush(stdout);
     stdout_unlock();
 }
+
+static void emit_disconnected_reason(const char* reason) {
+    stdout_lock();
+    printf("{\"evt\":\"disconnected\",\"reason\":");
+    json_escape_print(stdout, reason ? reason : "unknown");
+    printf("}\n");
+    fflush(stdout);
+    stdout_unlock();
+}
+
+static void close_connection_after_lost(const char* reason);
 
 static void emit_ok_ref(const char* cmd, const char* handlerRef) {
     stdout_lock();
@@ -304,6 +315,33 @@ static const char* mms_error_text(MmsError err) {
     }
 }
 
+static void emit_after_ied_error(IedClientError err) {
+    if (err == IED_ERROR_CONNECTION_LOST || err == IED_ERROR_NOT_CONNECTED) {
+        close_connection_after_lost(ied_error_message(err));
+        return;
+    }
+    emit_error(ied_error_message(err));
+}
+
+static void emit_after_mms_error(MmsError err) {
+    const char* msg = mms_error_text(err);
+    if (err == MMS_ERROR_CONNECTION_LOST) {
+        close_connection_after_lost(msg);
+        return;
+    }
+    emit_error(msg);
+}
+
+static void apply_cmd_timeout(const char* line) {
+    if (!g_con || !line) {
+        return;
+    }
+    int ms = json_int(line, "timeoutMs", 0);
+    if (ms >= 1000) {
+        IedConnection_setRequestTimeout(g_con, ms);
+    }
+}
+
 static MmsValue* read_dataset_fast(const char* ref, const char* line, MmsError* outErr) {
     if (outErr) {
         *outErr = MMS_ERROR_INVALID_ARGUMENTS;
@@ -313,13 +351,40 @@ static MmsValue* read_dataset_fast(const char* ref, const char* line, MmsError* 
     if (!g_con || !parse_dataset_ref(ref, domain, sizeof(domain), listName, sizeof(listName))) {
         return NULL;
     }
+    apply_cmd_timeout(line);
+
+    if (strchr(ref, '$')) {
+        IedClientError iedErr = IED_ERROR_OK;
+        ClientDataSet cds = IedConnection_readDataSetValues(g_con, &iedErr, ref, NULL);
+        if (cds && iedErr == IED_ERROR_OK) {
+            MmsValue* raw = ClientDataSet_getValues(cds);
+            MmsValue* values = raw ? MmsValue_clone(raw) : NULL;
+            ClientDataSet_destroy(cds);
+            if (values) {
+                if (outErr) {
+                    *outErr = MMS_ERROR_NONE;
+                }
+                return values;
+            }
+        } else if (cds) {
+            ClientDataSet_destroy(cds);
+        }
+        if (iedErr == IED_ERROR_CONNECTION_LOST || iedErr == IED_ERROR_NOT_CONNECTED) {
+            close_connection_after_lost(ied_error_message(iedErr));
+            if (outErr) {
+                *outErr = MMS_ERROR_CONNECTION_LOST;
+            }
+            return NULL;
+        }
+    }
+
     MmsConnection mms = IedConnection_getMmsConnection(g_con);
     if (!mms) {
         return NULL;
     }
 
     MmsError err = MMS_ERROR_NONE;
-    /* 优先 Read 命名数据集（子站抓包 ~50ms）；specWithResult=false 避免 GetVariableAccessAttributes。 */
+    /* 直连装置时常用 Read 命名数据集；子站合并模型优先走 readDataSetValues。 */
     MmsValue* values = MmsConnection_readNamedVariableListValues(mms, &err, domain, listName, false);
     if (values) {
         if (outErr) {
@@ -616,6 +681,19 @@ static void free_rcb_slot(ActiveRcb* slot) {
     slot->used = false;
 }
 
+static void close_connection_after_lost(const char* reason) {
+    for (int i = 0; i < MAX_RCB; i++) {
+        free_rcb_slot(&g_rcbs[i]);
+    }
+    if (g_con) {
+        IedConnection_close(g_con);
+        IedConnection_destroy(g_con);
+        g_con = NULL;
+    }
+    emit_error(reason ? reason : "CONNECTION_LOST");
+    emit_disconnected_reason(reason ? reason : "CONNECTION_LOST");
+}
+
 static ActiveRcb* alloc_rcb_slot(void) {
     for (int i = 0; i < MAX_RCB; i++) {
         if (!g_rcbs[i].used) {
@@ -644,9 +722,13 @@ static void cmd_connect(const char* line) {
         free_rcb_slot(&g_rcbs[i]);
     }
 
+    int reqTimeout = json_int(line, "timeoutMs", REQUEST_TIMEOUT_MS);
+    if (reqTimeout < 1000) {
+        reqTimeout = REQUEST_TIMEOUT_MS;
+    }
     g_con = IedConnection_create();
     IedConnection_setConnectTimeout(g_con, CONNECT_TIMEOUT_MS);
-    IedConnection_setRequestTimeout(g_con, REQUEST_TIMEOUT_MS);
+    IedConnection_setRequestTimeout(g_con, reqTimeout);
     IedClientError err = IED_ERROR_OK;
     IedConnection_connect(g_con, &err, host, port);
     if (err != IED_ERROR_OK) {
@@ -655,13 +737,15 @@ static void cmd_connect(const char* line) {
         g_con = NULL;
         return;
     }
+    stdout_lock();
     printf("{\"evt\":\"connected\",\"host\":");
     json_escape_print(stdout, host);
     printf(",\"port\":%d}\n", port);
     fflush(stdout);
+    stdout_unlock();
 }
 
-static void cmd_disconnect(void) {
+static void cmd_disconnect_with_reason(const char* reason) {
     for (int i = 0; i < MAX_RCB; i++) {
         free_rcb_slot(&g_rcbs[i]);
     }
@@ -670,8 +754,35 @@ static void cmd_disconnect(void) {
         IedConnection_destroy(g_con);
         g_con = NULL;
     }
-    printf("{\"evt\":\"disconnected\"}\n");
+    emit_disconnected_reason(reason ? reason : "user");
+}
+
+static void cmd_ping(void) {
+    if (!g_con) {
+        emit_error("NOT_CONNECTED");
+        emit_disconnected_reason("NOT_CONNECTED");
+        return;
+    }
+    IedClientError err = IED_ERROR_OK;
+    LinkedList list = IedConnection_getLogicalDeviceList(g_con, &err);
+    if (err != IED_ERROR_OK) {
+        if (list) {
+            LinkedList_destroy(list);
+        }
+        emit_after_ied_error(err);
+        return;
+    }
+    if (list) {
+        LinkedList_destroy(list);
+    }
+    stdout_lock();
+    printf("{\"evt\":\"ok\",\"cmd\":\"ping\"}\n");
     fflush(stdout);
+    stdout_unlock();
+}
+
+static void cmd_disconnect(void) {
+    cmd_disconnect_with_reason("user");
 }
 
 static void cmd_read_comm_state(const char* line) {
@@ -684,10 +795,11 @@ static void cmd_read_comm_state(const char* line) {
     if (dsRef[0] == 0) {
         strcpy(dsRef, "SubStationLD0/LLN0$dsCommState");
     }
+    apply_cmd_timeout(line);
     MmsError mmsErr = MMS_ERROR_NONE;
-    MmsValue* values = read_dataset_fast(dsRef, NULL, &mmsErr);
+    MmsValue* values = read_dataset_fast(dsRef, line, &mmsErr);
     if (!values) {
-        emit_error(mms_error_text(mmsErr));
+        emit_after_mms_error(mmsErr);
         return;
     }
     int n = values ? MmsValue_getArraySize(values) : 0;
@@ -715,7 +827,7 @@ static void cmd_get_ld_list(void) {
     IedClientError err = IED_ERROR_OK;
     LinkedList list = IedConnection_getLogicalDeviceList(g_con, &err);
     if (err != IED_ERROR_OK) {
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
     printf("{\"evt\":\"ld_list\",\"devices\":[");
@@ -748,7 +860,7 @@ static void cmd_get_datasets(const char* line) {
     IedClientError err = IED_ERROR_OK;
     LinkedList list = IedConnection_getLogicalDeviceDataSets(g_con, &err, ld);
     if (err != IED_ERROR_OK) {
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
     printf("{\"evt\":\"datasets\",\"ld\":");
@@ -783,7 +895,7 @@ static void cmd_get_dataset_directory(const char* line) {
     IedClientError err = IED_ERROR_OK;
     LinkedList list = IedConnection_getDataSetDirectory(g_con, &err, ref, NULL);
     if (err != IED_ERROR_OK) {
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
     printf("{\"evt\":\"dataset_directory\",\"ref\":");
@@ -818,7 +930,7 @@ static void cmd_read_dataset(const char* line) {
     MmsError mmsErr = MMS_ERROR_NONE;
     MmsValue* values = read_dataset_fast(ref, line, &mmsErr);
     if (!values) {
-        emit_error(mms_error_text(mmsErr));
+        emit_after_mms_error(mmsErr);
         return;
     }
     emit_dataset_values(ref, values);
@@ -874,7 +986,7 @@ static void cmd_enable_rcb(const char* line) {
     slot->rcb = IedConnection_getRCBValues(g_con, &err, rcbGetRef, NULL);
     if (err != IED_ERROR_OK || !slot->rcb) {
         free_rcb_slot(slot);
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
 
@@ -885,7 +997,7 @@ static void cmd_enable_rcb(const char* line) {
     slot->clientDataSet = IedConnection_readDataSetValues(g_con, &err, dsRef, NULL);
     if (err != IED_ERROR_OK || !slot->clientDataSet) {
         free_rcb_slot(slot);
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
     slot->dataSetDirectory = IedConnection_getDataSetDirectory(g_con, &err, dsRef, NULL);
@@ -922,7 +1034,7 @@ static void cmd_enable_rcb(const char* line) {
     }
     if (err != IED_ERROR_OK) {
         free_rcb_slot(slot);
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
 
@@ -967,7 +1079,7 @@ static void cmd_gi(const char* line) {
     ClientReportControlBlock_setGI(slot->rcb, true);
     IedConnection_setRCBValues(g_con, &err, slot->rcb, RCB_ELEMENT_GI, true);
     if (err != IED_ERROR_OK) {
-        emit_error(ied_error_message(err));
+        emit_after_ied_error(err);
         return;
     }
     emit_ok_ref("gi", handlerRef);
@@ -1062,7 +1174,7 @@ static void cmd_list_files(const char* line) {
         emit_files_json(path, NULL, ied_error_message(err));
         return;
     }
-    emit_error(ied_error_message(err));
+    emit_after_ied_error(err);
 }
 
 static void dispatch(const char* line) {
@@ -1094,10 +1206,14 @@ static void dispatch(const char* line) {
         cmd_gi(line);
     } else if (strcmp(cmd, "list_files") == 0) {
         cmd_list_files(line);
+    } else if (strcmp(cmd, "ping") == 0) {
+        cmd_ping();
     } else if (strcmp(cmd, "quit") == 0) {
-        cmd_disconnect();
+        cmd_disconnect_with_reason("quit");
+        stdout_lock();
         printf("{\"evt\":\"bye\"}\n");
         fflush(stdout);
+        stdout_unlock();
         exit(0);
     } else {
         emit_error("unknown cmd");
@@ -1119,6 +1235,6 @@ int main(void) {
         }
         dispatch(line);
     }
-    cmd_disconnect();
+    cmd_disconnect_with_reason("stdin_eof");
     return 0;
 }

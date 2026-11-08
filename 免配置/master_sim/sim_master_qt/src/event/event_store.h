@@ -34,6 +34,8 @@ public:
     void append(const StationEvent& ev);
     void appendBatch(const QVector<StationEvent>& evs);
     QVector<StationEvent> snapshot() const;
+    /** Events belonging to one IED only (station-level rows with empty iedName are excluded). */
+    QVector<StationEvent> snapshotForIed(const QString& iedName) const;
     static constexpr int kMaxEvents = 10000;
 
 signals:

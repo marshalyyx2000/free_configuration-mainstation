@@ -125,21 +125,33 @@ static int runMaintainUploadTest(int argc, char* argv[])
     QCoreApplication core(argc, argv);
     QString host = QStringLiteral("192.168.0.10");
     int port = 2405;
+    bool waitGenconfig = false;
     QString outDir = AppPaths::outDir();
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
-        if (arg == QStringLiteral("--maintain-test") && i + 1 < argc)
-            host = QString::fromLocal8Bit(argv[++i]);
-        else if (arg == QStringLiteral("--maintain-port") && i + 1 < argc)
+        if (arg == QStringLiteral("--maintain-test"))
+            continue;
+        if (arg == QStringLiteral("--wait-genconfig")) {
+            waitGenconfig = true;
+            continue;
+        }
+        if (arg == QStringLiteral("--maintain-port") && i + 1 < argc) {
             port = QString::fromLocal8Bit(argv[++i]).toInt();
-        else if (arg == QStringLiteral("--out") && i + 1 < argc)
+            continue;
+        }
+        if (arg == QStringLiteral("--out") && i + 1 < argc) {
             outDir = QString::fromLocal8Bit(argv[++i]);
+            continue;
+        }
+        if (arg.startsWith(QLatin1Char('-')))
+            continue;
+        host = arg;
     }
     const auto log = [](const QString& msg) {
         fprintf(stderr, "%s\n", msg.toLocal8Bit().constData());
     };
     try {
-        LabOps::runUpload(host, port, outDir, false, 102, log);
+        LabOps::runUpload(host, port, outDir, waitGenconfig, 102, log);
         fprintf(stderr, "maintain-test OK\n");
         return 0;
     } catch (const std::exception& ex) {

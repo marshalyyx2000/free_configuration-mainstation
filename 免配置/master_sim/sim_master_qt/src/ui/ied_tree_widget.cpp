@@ -63,7 +63,8 @@ void IedTreeWidget::onSearchChanged(const QString& text)
 
 void IedTreeWidget::onItemSelectionChanged()
 {
-    const QTreeWidgetItem* item = m_tree->currentItem();
+    const QList<QTreeWidgetItem*> selected = m_tree->selectedItems();
+    const QTreeWidgetItem* item = selected.isEmpty() ? m_tree->currentItem() : selected.first();
     if (!item)
         return;
     const int idx = item->data(0, Qt::UserRole + 1).toInt();

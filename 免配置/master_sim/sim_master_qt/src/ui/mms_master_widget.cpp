@@ -21,6 +21,7 @@
 #include <QMessageBox>
 #include <QProgressDialog>
 #include <QSplitter>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QTabWidget>
 #include <QTextEdit>
@@ -45,6 +46,30 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     m_linkStatus = new QLabel(tr("未连接"), this);
     m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
     tb->addWidget(m_linkStatus);
+
+    auto* cfgTb = new QToolBar(tr("配置"), this);
+    cfgTb->addWidget(new QLabel(tr("链路监测(秒)"), this));
+    m_linkWatchSpin = new QSpinBox(this);
+    m_linkWatchSpin->setRange(30, 86400);
+    m_linkWatchSpin->setToolTip(tr("定时 ping 子站；失败则记录原因并自动重连、全站订阅与总召唤"));
+    cfgTb->addWidget(m_linkWatchSpin);
+    cfgTb->addWidget(new QLabel(tr("  周期总召(秒)"), this));
+    m_stationGiSpin = new QSpinBox(this);
+    m_stationGiSpin->setRange(60, 86400);
+    m_stationGiSpin->setToolTip(tr("已连接且已订阅时周期性全站总召唤"));
+    cfgTb->addWidget(m_stationGiSpin);
+    if (m_settings) {
+        m_linkWatchSpin->setValue(m_settings->linkWatchSec());
+        m_stationGiSpin->setValue(m_settings->stationGiSec());
+    }
+    connect(m_linkWatchSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+        if (m_settings)
+            m_settings->setLinkWatchSec(v);
+    });
+    connect(m_stationGiSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+        if (m_settings)
+            m_settings->setStationGiSec(v);
+    });
 
     m_iedInfo = new QLabel(tr("未选择装置"), this);
 
@@ -80,6 +105,7 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
 
     auto* v = new QVBoxLayout(this);
     v->addWidget(tb);
+    v->addWidget(cfgTb);
     v->addWidget(m_iedInfo);
     v->addWidget(split, 1);
     v->addWidget(new QLabel(tr("MMS 连接日志（与运维页「探测端口」无关，需本页连接 SubStation）"), this));
@@ -90,12 +116,26 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
     if (m_settings)
         connect(m_settings, &SharedConnectionSettings::settingsChanged, this, &MmsMasterWidget::onSettingsChanged);
 
+    m_watchTimer.setSingleShot(false);
+    connect(&m_watchTimer, &QTimer::timeout, this, &MmsMasterWidget::onWatchTimeout);
+    m_giTimer.setSingleShot(false);
+    connect(&m_giTimer, &QTimer::timeout, this, &MmsMasterWidget::onPeriodicGiTimeout);
+
     loadDefaultData();
 }
 
 bool MmsMasterWidget::runSelfTest()
 {
     return m_model.devices().size() >= 1;
+}
+
+void MmsMasterWidget::prepareForConfigGeneration()
+{
+    // Parsing a ~100 MB SMCD keeps the file busy on some Windows setups; drop
+    // the in-memory tree before the worker thread rewrites out/station.SMCD.
+    m_model.clearLoadedModels();
+    m_iedTree->setDevices({});
+    m_iedStack->setCurrentIndex(0);
 }
 
 void MmsMasterWidget::reloadModelData()
@@ -146,7 +186,11 @@ void MmsMasterWidget::appendMmsLog(const QString& msg)
 
 void MmsMasterWidget::onSettingsChanged()
 {
-    Q_UNUSED(m_settings);
+    if (m_linkWatchSpin && m_settings && m_linkWatchSpin->value() != m_settings->linkWatchSec())
+        m_linkWatchSpin->setValue(m_settings->linkWatchSec());
+    if (m_stationGiSpin && m_settings && m_stationGiSpin->value() != m_settings->stationGiSec())
+        m_stationGiSpin->setValue(m_settings->stationGiSec());
+    applyWatchTimers(m_mms.connected() && !m_userDisconnect);
 }
 
 void MmsMasterWidget::openScd()
@@ -164,6 +208,8 @@ void MmsMasterWidget::connectSubstation()
 {
     if (!m_settings)
         return;
+    m_userDisconnect = false;
+    m_linkLostHandled = false;
     const QString host = m_settings->host();
     const int port = m_settings->mmsPort();
     if (host.trimmed().isEmpty()) {
@@ -198,6 +244,9 @@ void MmsMasterWidget::connectSubstation()
 
 void MmsMasterWidget::disconnectSubstation()
 {
+    m_userDisconnect = true;
+    m_watchTimer.stop();
+    m_giTimer.stop();
     m_mms.disconnectHost();
     m_subscribedHandlers.clear();
     updateSubscribedUi();
@@ -211,6 +260,9 @@ MmsMasterWidget::IedPageSet* MmsMasterWidget::pagesFor(const QString& iedName)
         return &m_pages[iedName];
     IedPageSet set;
     set.tabs = new QTabWidget;
+    set.events = new StationEventListWidget(&m_events, set.tabs);
+    set.events->setIedFilter(iedName);
+    set.tabs->addTab(set.events, tr("装置事件"));
     const struct {
         ReportPanelType type;
         const char* title;
@@ -226,6 +278,10 @@ MmsMasterWidget::IedPageSet* MmsMasterWidget::pagesFor(const QString& iedName)
     for (const auto& d : defs) {
         auto* panel = new ReportCtrlPanel(d.type, &m_mms, set.tabs);
         connect(panel, &ReportCtrlPanel::logLine, this, [this](const QString& msg) { appendMmsLog(msg); });
+        connect(panel, &ReportCtrlPanel::deviceEvent, this,
+            [this, iedName](const QString& cat, const QString& dsRef, const QString& summary) {
+                appendDeviceEvent(iedName, cat, dsRef, summary);
+            });
         connect(panel, &ReportCtrlPanel::subscribeAllForIed, this, [this](const QString& ied) {
             if (!m_mms.connected())
                 return;
@@ -255,13 +311,13 @@ ReportCtrlPanel* MmsMasterWidget::panelForIed(const QString& iedName, ReportPane
         ReportPanelType type;
         int index;
     } map[] = {
-        { ReportPanelType::Setting, 0 },
-        { ReportPanelType::RelayEna, 1 },
-        { ReportPanelType::Din, 2 },
-        { ReportPanelType::Ain, 3 },
-        { ReportPanelType::Other, 4 },
-        { ReportPanelType::ReportInst, 5 },
-        { ReportPanelType::Wave, 6 },
+        { ReportPanelType::Setting, 1 },
+        { ReportPanelType::RelayEna, 2 },
+        { ReportPanelType::Din, 3 },
+        { ReportPanelType::Ain, 4 },
+        { ReportPanelType::Other, 5 },
+        { ReportPanelType::ReportInst, 6 },
+        { ReportPanelType::Wave, 7 },
     };
     for (const auto& m : map) {
         if (m.type == type && m.index < set->panels.size())
@@ -326,6 +382,7 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
 {
     int okCount = 0;
     int failCount = 0;
+    int skippedOffline = 0;
     for (int i = 0; i < list.size(); ++i) {
         if (prog) {
             prog->setValue(i);
@@ -333,6 +390,13 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
                 break;
         }
         const RcbDescriptor& d = list[i];
+        /* 自动恢复时只订阅通信工况为“合”的装置：现场 159 台里常有百余台
+           未投运，逐台 enable_rcb 会等 12s 超时并刷大量错误，看起来像“订阅失败”。 */
+        if (!prog && !m_commState.isEmpty() && m_commState.contains(d.iedName)
+            && !m_commState.value(d.iedName)) {
+            ++skippedOffline;
+            continue;
+        }
         if (m_subscribedHandlers.contains(d.handlerRef)) {
             okCount++;
             continue;
@@ -380,6 +444,8 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
         prog->setValue(list.size());
     if (list.size() > 1)
         appendMmsLog(tr("批量订阅：成功 %1，失败 %2").arg(okCount).arg(failCount));
+    if (skippedOffline > 0)
+        appendMmsLog(tr("自动订阅跳过 %1 个通信工况为分的装置").arg(skippedOffline));
 }
 
 void MmsMasterWidget::subscribeAllStation()
@@ -388,10 +454,21 @@ void MmsMasterWidget::subscribeAllStation()
         QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
         return;
     }
+    subscribeAllStationInternal(true);
+}
+
+void MmsMasterWidget::subscribeAllStationInternal(bool showProgress)
+{
+    if (!m_mms.connected())
+        return;
     const QVector<RcbDescriptor> list = m_model.allSubscribeRcbs();
-    QProgressDialog prog(tr("全站订阅…"), tr("取消"), 0, list.size(), this);
-    prog.setWindowModality(Qt::WindowModal);
-    subscribeRcbDescriptors(list, &prog);
+    if (showProgress) {
+        QProgressDialog prog(tr("全站订阅…"), tr("取消"), 0, list.size(), this);
+        prog.setWindowModality(Qt::WindowModal);
+        subscribeRcbDescriptors(list, &prog);
+    } else {
+        subscribeRcbDescriptors(list, nullptr);
+    }
 }
 
 void MmsMasterWidget::unsubscribeAllStation()
@@ -405,18 +482,103 @@ void MmsMasterWidget::unsubscribeAllStation()
 
 void MmsMasterWidget::giAllStation()
 {
+    giAllStationInternal(true);
+}
+
+void MmsMasterWidget::giAllStationInternal(bool userInitiated)
+{
     if (!m_mms.connected()) {
-        QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
+        if (userInitiated)
+            QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
         return;
     }
     if (m_subscribedHandlers.isEmpty()) {
-        QMessageBox::warning(this, tr("提示"), tr("全站总召唤未执行：请先全站订阅"));
+        if (userInitiated)
+            QMessageBox::warning(this, tr("提示"), tr("全站总召唤未执行：请先全站订阅"));
         return;
     }
     const QSet<QString> handlers = m_subscribedHandlers;
     for (const QString& h : handlers)
         m_mms.triggerGi(h);
     appendMmsLog(tr("全站总召唤：已向 %1 个报告控制块发出总召唤").arg(handlers.size()));
+}
+
+void MmsMasterWidget::markLinkLost(const QString& reason)
+{
+    if (m_linkLostHandled && !m_mms.connected())
+        return;
+    m_linkLostHandled = true;
+    m_watchTimer.stop();
+    m_giTimer.stop();
+    m_subscribedHandlers.clear();
+    updateSubscribedUi();
+    m_linkStatus->setText(tr("未连接"));
+    m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+    const QString r = reason.isEmpty() ? tr("未知") : reason;
+    appendMmsLog(tr("MMS 链路断开：%1").arg(r));
+    appendRcbControlEvent(StationEventCategory::linkDown(), QString(),
+        tr("SubStation 连接断开（%1）").arg(r));
+    if (!m_userDisconnect)
+        QTimer::singleShot(500, this, &MmsMasterWidget::reconnectAndRecover);
+}
+
+void MmsMasterWidget::reconnectAndRecover()
+{
+    if (m_userDisconnect)
+        return;
+    if (m_mms.connected()) {
+        onConnectedAutoRecover();
+        return;
+    }
+    appendMmsLog(tr("正在自动重连 SubStation…"));
+    connectSubstation();
+}
+
+void MmsMasterWidget::onConnectedAutoRecover()
+{
+    if (m_userDisconnect || m_recoverRunning)
+        return;
+    m_recoverRunning = true;
+    m_linkLostHandled = false;
+    appendMmsLog(tr("连接就绪：自动全站订阅与总召唤…"));
+    subscribeAllStationInternal(false);
+    giAllStationInternal(false);
+    applyWatchTimers(true);
+    m_recoverRunning = false;
+}
+
+void MmsMasterWidget::applyWatchTimers(bool startIfConnected)
+{
+    if (!m_settings)
+        return;
+    m_watchTimer.setInterval(m_settings->linkWatchSec() * 1000);
+    m_giTimer.setInterval(m_settings->stationGiSec() * 1000);
+    if (startIfConnected && m_mms.connected() && !m_userDisconnect) {
+        m_watchTimer.start();
+        m_giTimer.start();
+    } else {
+        m_watchTimer.stop();
+        m_giTimer.stop();
+    }
+}
+
+void MmsMasterWidget::onWatchTimeout()
+{
+    if (m_userDisconnect)
+        return;
+    if (!m_mms.connected()) {
+        markLinkLost(QStringLiteral("watch_not_connected"));
+        return;
+    }
+    m_mms.ping();
+}
+
+void MmsMasterWidget::onPeriodicGiTimeout()
+{
+    if (m_userDisconnect || !m_mms.connected() || m_subscribedHandlers.isEmpty())
+        return;
+    appendMmsLog(tr("周期全站总召唤…"));
+    giAllStationInternal(false);
 }
 
 void MmsMasterWidget::appendEventFromReport(const QJsonObject& evt)
@@ -458,6 +620,29 @@ void MmsMasterWidget::appendRcbControlEvent(const QString& category, const QStri
         if (rpt && !rpt->desc.isEmpty())
             se.rcbName = rpt->desc + QStringLiteral(" (") + se.rcbName + QLatin1Char(')');
     }
+    m_events.append(se);
+}
+
+void MmsMasterWidget::appendDeviceEvent(const QString& iedName, const QString& category,
+    const QString& dsRef, const QString& summary)
+{
+    if (iedName.isEmpty())
+        return;
+    StationEvent se;
+    se.time = QDateTime::currentDateTime();
+    se.category = category;
+    se.iedName = iedName;
+    for (const IedDeviceEntry& d : m_model.devices()) {
+        if (d.iedName == iedName) {
+            se.iedDesc = d.desc.isEmpty() ? d.iedName : d.desc;
+            break;
+        }
+    }
+    if (se.iedDesc.isEmpty())
+        se.iedDesc = iedName;
+    se.pointName = summary;
+    se.address = dsRef;
+    se.reasonText = category;
     m_events.append(se);
 }
 
@@ -548,11 +733,17 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
             for (ReportCtrlPanel* p : it->panels)
                 p->onConnectionReady();
         }
+        onConnectedAutoRecover();
     }
     if (type == QStringLiteral("disconnected")) {
-        m_linkStatus->setText(tr("未连接"));
-        m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
-        appendRcbControlEvent(StationEventCategory::linkDown(), QString(), tr("已断开 SubStation 连接"));
+        const QString reason = evt.value(QStringLiteral("reason")).toString();
+        if (m_userDisconnect || reason == QStringLiteral("user") || reason == QStringLiteral("quit")) {
+            m_linkStatus->setText(tr("未连接"));
+            m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
+            appendRcbControlEvent(StationEventCategory::linkDown(), QString(), tr("已断开 SubStation 连接"));
+        } else {
+            markLinkLost(reason.isEmpty() ? QStringLiteral("disconnected") : reason);
+        }
     }
     if (type == QStringLiteral("error")) {
         const QString msg = evt.value(QStringLiteral("msg")).toString();
@@ -561,7 +752,10 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         if (msg == QStringLiteral("too many active rcbs"))
             return;
         appendMmsLog(tr("MMS 错误: %1").arg(msg));
-        if (!m_mms.connected()) {
+        if (msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")) {
+            if (!m_userDisconnect)
+                markLinkLost(msg);
+        } else if (!m_mms.connected()) {
             m_linkStatus->setText(tr("连接失败: %1").arg(msg));
             m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
         }

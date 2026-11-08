@@ -8,9 +8,11 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QSet>
+#include <QTimer>
 #include <QVector>
 #include <QWidget>
 
+class QSpinBox;
 class SharedConnectionSettings;
 class IedTreeWidget;
 class StationEventListWidget;
@@ -29,6 +31,7 @@ public:
 
 public slots:
     void reloadModelData();
+    void prepareForConfigGeneration();
     void connectSubstation();
     void disconnectSubstation();
 
@@ -40,10 +43,13 @@ private slots:
     void onIedSelected(const IedDeviceEntry& dev);
     void onMmsEvent(const QJsonObject& evt);
     void onSettingsChanged();
+    void onWatchTimeout();
+    void onPeriodicGiTimeout();
 
 private:
     struct IedPageSet {
         QTabWidget* tabs = nullptr;
+        StationEventListWidget* events = nullptr;
         QVector<ReportCtrlPanel*> panels;
     };
 
@@ -53,11 +59,19 @@ private:
     void appendEventFromReport(const QJsonObject& evt);
     void appendMmsLog(const QString& msg);
     void appendRcbControlEvent(const QString& category, const QString& handlerRef, const QString& summary);
+    void appendDeviceEvent(const QString& iedName, const QString& category, const QString& dsRef,
+        const QString& summary);
     void subscribeRcbDescriptors(const QVector<RcbDescriptor>& list, QProgressDialog* prog);
     void dispatchReportToPanels(const QString& iedName, const QJsonObject& evt);
     void flushPendingReports(const QString& iedName);
     IedPageSet* pagesFor(const QString& iedName);
     ReportCtrlPanel* panelForIed(const QString& iedName, ReportPanelType type);
+    void subscribeAllStationInternal(bool showProgress);
+    void giAllStationInternal(bool userInitiated);
+    void markLinkLost(const QString& reason);
+    void reconnectAndRecover();
+    void onConnectedAutoRecover();
+    void applyWatchTimers(bool startIfConnected);
 
     SharedConnectionSettings* m_settings = nullptr;
     ScdModelLoader m_model;
@@ -76,6 +90,13 @@ private:
     QHash<QString, QString> m_lastValues;
     QHash<QString, QVector<QJsonObject>> m_pendingReportsByIed;
     QString m_smcdPath;
+    QTimer m_watchTimer;
+    QTimer m_giTimer;
+    QSpinBox* m_linkWatchSpin = nullptr;
+    QSpinBox* m_stationGiSpin = nullptr;
+    bool m_userDisconnect = false;
+    bool m_recoverRunning = false;
+    bool m_linkLostHandled = false;
 };
 
 #endif

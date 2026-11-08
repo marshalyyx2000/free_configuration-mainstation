@@ -71,6 +71,8 @@ class ScdModelLoader {
 public:
     bool loadIedList(const QString& path);
     bool loadSmcd(const QString& path);
+    /** Drop parsed SMCD / IEDList so a large station.SMCD can be rewritten on disk. */
+    void clearLoadedModels();
     const QVector<IedDeviceEntry>& devices() const { return m_devices; }
     const IedModel* modelFor(const QString& iedName) const;
     /** Longest IEDList ied_name prefix matching MMS ref (e.g. E1Q1SB41PROT/... → E1Q1SB41). */

@@ -31,6 +31,8 @@ protected:
 signals:
     void subscribeAllForIed(const QString& iedName);
     void logLine(const QString& msg);
+    /** Device-scoped event for the IED event page (category as in StationEventCategory). */
+    void deviceEvent(const QString& category, const QString& dsRef, const QString& summary);
 
 private slots:
     void onUpperSelectionChanged();

@@ -10,6 +10,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QTcpSocket>
@@ -32,6 +33,131 @@ namespace LabOps {
 namespace {
 
 void noopLog(const QString&) {}
+
+int countIedListDevices(const QByteArray& iedXml)
+{
+    const QString text = QString::fromUtf8(iedXml);
+    int n = 0;
+    int pos = 0;
+    const QString tag = QStringLiteral("<Device");
+    while ((pos = text.indexOf(tag, pos)) >= 0) {
+        ++n;
+        pos += tag.size();
+    }
+    return n;
+}
+
+void logIedListSubnets(const QByteArray& iedXml, const LabLogFn& log)
+{
+    const QString text = QString::fromUtf8(iedXml);
+    const int n172 = text.count(QStringLiteral("172.16."));
+    const int n10 = text.count(QStringLiteral("10.100.100."));
+    log(QStringLiteral("本地下装台账: %1 台装置；ch_para 含 172.16.x=%2、10.100.100.x=%3")
+            .arg(countIedListDevices(iedXml))
+            .arg(n172)
+            .arg(n10));
+    if (n10 >= 5 && n172 == 0) {
+        log(QStringLiteral(
+            "警告: 台账仍是 10.100.100 仿真网段。江西站请用最新 SCD 生成配置，勿误用 master_sim/out 旧 26579 台账。"));
+    }
+}
+
+QString resolveMmsCliPath()
+{
+    QString cliPath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("mms_master_cli.exe"));
+    if (!QFileInfo::exists(cliPath))
+        cliPath = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../bin/mms_master_cli.exe"));
+    return cliPath;
+}
+
+std::optional<int> readCommStateEntryCount(const QString& host, int mmsPort, const LabLogFn& log)
+{
+    const QString cliPath = resolveMmsCliPath();
+    if (!QFileInfo::exists(cliPath))
+        return std::nullopt;
+
+    QProcess proc;
+    proc.setProgram(cliPath);
+    proc.setWorkingDirectory(QFileInfo(cliPath).absolutePath());
+    proc.setProcessChannelMode(QProcess::SeparateChannels);
+#ifdef Q_OS_WIN
+    proc.setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments* args) {
+        args->flags |= CREATE_NO_WINDOW;
+        args->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        args->startupInfo->wShowWindow = SW_HIDE;
+    });
+#endif
+    proc.start();
+    if (!proc.waitForStarted(5000))
+        return std::nullopt;
+
+    proc.write(QJsonDocument(QJsonObject{
+                               { QStringLiteral("cmd"), QStringLiteral("connect") },
+                               { QStringLiteral("host"), host },
+                               { QStringLiteral("port"), mmsPort },
+                           })
+                   .toJson(QJsonDocument::Compact)
+            + '\n');
+
+    bool connected = false;
+    const qint64 deadline = QDateTime::currentMSecsSinceEpoch() + 30000;
+    while (QDateTime::currentMSecsSinceEpoch() < deadline && !connected) {
+        if (!proc.waitForReadyRead(500))
+            continue;
+        const QList<QByteArray> lines = proc.readAllStandardOutput().split('\n');
+        for (QByteArray line : lines) {
+            line = line.trimmed();
+            if (line.isEmpty())
+                continue;
+            QJsonParseError err;
+            const QJsonDocument doc = QJsonDocument::fromJson(line, &err);
+            if (err.error != QJsonParseError::NoError || !doc.isObject())
+                continue;
+            if (doc.object().value(QStringLiteral("evt")).toString() == QStringLiteral("connected"))
+                connected = true;
+        }
+    }
+    if (!connected) {
+        proc.kill();
+        return std::nullopt;
+    }
+
+    proc.write(QJsonDocument(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("read_comm_state") } })
+                   .toJson(QJsonDocument::Compact)
+            + '\n');
+
+    std::optional<int> count;
+    const qint64 readDeadline = QDateTime::currentMSecsSinceEpoch() + 60000;
+    while (QDateTime::currentMSecsSinceEpoch() < readDeadline && !count.has_value()) {
+        if (!proc.waitForReadyRead(500))
+            continue;
+        const QList<QByteArray> lines = proc.readAllStandardOutput().split('\n');
+        for (QByteArray line : lines) {
+            line = line.trimmed();
+            if (line.isEmpty())
+                continue;
+            QJsonParseError err;
+            const QJsonDocument doc = QJsonDocument::fromJson(line, &err);
+            if (err.error != QJsonParseError::NoError || !doc.isObject())
+                continue;
+            const QJsonObject obj = doc.object();
+            if (obj.value(QStringLiteral("evt")).toString() != QStringLiteral("comm_state"))
+                continue;
+            count = obj.value(QStringLiteral("entries")).toArray().size();
+        }
+    }
+
+    proc.write(QJsonDocument(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("quit") } })
+                   .toJson(QJsonDocument::Compact)
+            + '\n');
+    proc.waitForFinished(3000);
+    if (proc.state() != QProcess::NotRunning)
+        proc.kill();
+
+    if (count.has_value())
+        log(QStringLiteral("装置 dsCommState 条目: %1").arg(*count));
+    return count;
+}
 
 class StepTimer {
 public:
@@ -87,14 +213,15 @@ std::optional<double> waitForMmsPort(const QString& host, int port, const QStrin
                 .arg(host)
                 .arg(port)
                 .arg(model));
-        const qint64 dropDeadline = QDateTime::currentMSecsSinceEpoch() + 90000;
+        const qint64 dropDeadline = QDateTime::currentMSecsSinceEpoch() + 600000;
         while (QDateTime::currentMSecsSinceEpoch() < dropDeadline && tcpReachable(host, port, 1500))
-            QThread::msleep(1000);
+            QThread::msleep(2000);
         if (tcpReachable(host, port, 1500)) {
             log(QStringLiteral(
-                "102 一直未关闭，本次「装置耗时」会接近 0，不能代表 genconfig。"
-                "请先在装置上删除 supervision.cfg/.stamp 并 kill iec61850router 后再测。"));
-            return 0.0;
+                "102 一直未关闭：旧 iec61850router 未退出，新 IEDList（172.16）未装载。"
+                "请设置 SUBST_PASS 后运行 免配置/ops/reload_61850_router.py，"
+                "或在装置上 kill router 并删除 supervision.cfg/.stamp 后再次下装生效。"));
+            return std::nullopt;
         }
         log(QStringLiteral("102 已关闭，开始计时等待重新生成/装载…"));
     }
@@ -193,6 +320,8 @@ std::optional<double> runUpload(const QString& host, int maintainPort, const QSt
     iedFile.open(QIODevice::ReadOnly);
     const QByteArray ied = iedFile.readAll();
     iedFile.close();
+    const int expectedDevices = countIedListDevices(ied);
+    logIedListSubnets(ied, lg);
     QFile zipFile(zipPath);
     zipFile.open(QIODevice::ReadOnly);
     const QByteArray zipp = zipFile.readAll();
@@ -245,9 +374,17 @@ std::optional<double> runUpload(const QString& host, int maintainPort, const QSt
         QElapsedTimer tw;
         tw.start();
         elapsed = waitForMmsPort(host, mmsPort, outDir, lg);
-        if (elapsed.has_value())
+        if (elapsed.has_value()) {
             timer.add(QStringLiteral("装置 genconfig.jar+装载（至 102，模型 %1）").arg(modelMb), *elapsed);
-        else
+            if (const auto n = readCommStateEntryCount(host, mmsPort, lg)) {
+                if (*n != expectedDevices) {
+                    lg(QStringLiteral(
+                        "通信工况条目 %1 ≠ 台账 %2：装置仍在用旧路由配置。请执行 reload_61850_router.py。")
+                            .arg(*n)
+                            .arg(expectedDevices));
+                }
+            }
+        } else
             timer.add(QStringLiteral("装置 genconfig.jar+装载（超时未开 102）"), tw.elapsed() / 1000.0);
     }
 

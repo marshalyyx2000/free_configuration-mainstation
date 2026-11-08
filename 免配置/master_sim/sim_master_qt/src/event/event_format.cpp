@@ -79,6 +79,14 @@ QString giReport()
 {
     return QStringLiteral("总召唤上送");
 }
+QString datasetRead()
+{
+    return QStringLiteral("召唤");
+}
+QString datasetReadDone()
+{
+    return QStringLiteral("召唤完成");
+}
 QString linkUp()
 {
     return QStringLiteral("连接");
@@ -94,7 +102,9 @@ QString stationEventDetailText(const StationEvent& ev)
     const QString desc = ev.pointName.isEmpty() ? ev.address : ev.pointName;
     if (ev.category == StationEventCategory::rcbSubscribe() || ev.category == StationEventCategory::rcbGi()
         || ev.category == StationEventCategory::rcbUnsubscribe() || ev.category == StationEventCategory::linkUp()
-        || ev.category == StationEventCategory::linkDown()) {
+        || ev.category == StationEventCategory::linkDown()
+        || ev.category == StationEventCategory::datasetRead()
+        || ev.category == StationEventCategory::datasetReadDone()) {
         return QStringLiteral(
                    "时间：%1\n"
                    "事件类别：%2\n"

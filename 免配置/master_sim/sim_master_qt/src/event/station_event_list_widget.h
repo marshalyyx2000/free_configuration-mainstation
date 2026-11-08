@@ -20,9 +20,15 @@ class StationEventListWidget : public QWidget {
 public:
     explicit StationEventListWidget(EventStore* store, QWidget* parent = nullptr);
     void refreshView();
+    /** Restrict this view to one IED; empty string shows all events (station-wide). */
+    void setIedFilter(const QString& iedName);
+    QString iedFilter() const { return m_iedFilter; }
 
 signals:
     void eventActivated(const StationEvent& ev);
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private slots:
     void onFilterChanged();
@@ -45,6 +51,8 @@ private:
     QVector<StationEvent> m_filtered;
     QPlainTextEdit* m_detail = nullptr;
     QTimer* m_refreshTimer = nullptr;
+    QString m_iedFilter;
+    bool m_dirty = false;
 };
 
 #endif

@@ -1,0 +1,21 @@
+{
+  "local_fast_smcd_jiangxi": {
+    "wall_sec": 0.94,
+    "mini_kb": 1592,
+    "cfg_bytes": 21415,
+    "jar": "genconfig-fast.jar"
+  },
+  "remote_device_collapsed_cid": {
+    "host": "192.168.0.10",
+    "supervision_CID_bytes": 75730544,
+    "ied_tag_count": 1,
+    "note": "router 折叠单 IED ~70MB；bloated 路径仅保留 dsCommState(159 FCDA)+模板"
+  },
+  "remote_fast_bench": {
+    "wall_sec": 20,
+    "exit_code": 0,
+    "cfg_bytes": 20616,
+    "mini_kb": 1562,
+    "ok_under_60s": true
+  }
+}

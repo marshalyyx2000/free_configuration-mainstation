@@ -22,6 +22,26 @@ def tcp_probe(host: str, port: int) -> bool:
         return False
 
 
+def comm_state_entry_count(host: str, port: int = DEFAULT_PORT, ds_ref: str = DEFAULT_DS) -> int | None:
+    """读 dsCommState 成员个数；失败返回 None。"""
+    bridge = MmsMasterBridge()
+    if not bridge.available:
+        return None
+    bridge.start()
+    bridge.drain_until(lambda e: e.get("evt") == "ready", timeout_sec=5)
+    bridge.send({"cmd": "connect", "host": host, "port": port})
+    if not bridge.drain_until(lambda e: e.get("evt") == "connected", timeout_sec=15):
+        bridge.stop()
+        return None
+    bridge.send({"cmd": "read_comm_state", "ref": ds_ref})
+    evt = bridge.drain_until(lambda e: e.get("evt") == "comm_state", timeout_sec=60)
+    bridge.send({"cmd": "quit"})
+    bridge.stop()
+    if not evt:
+        return None
+    return len(evt.get("entries") or [])
+
+
 def comm_state_via_cli(host: str, port: int, ds_ref: str) -> int:
     bridge = MmsMasterBridge()
     if not bridge.available:

@@ -185,6 +185,11 @@ void MmsClientBridge::listFiles(const QString& path, const QString& requestId)
     });
 }
 
+void MmsClientBridge::ping()
+{
+    sendCommand(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("ping") } });
+}
+
 void MmsClientBridge::onReadyRead()
 {
     m_readBuffer.append(m_proc.readAllStandardOutput());
@@ -224,6 +229,13 @@ void MmsClientBridge::handleLine(const QByteArray& line)
         m_connected = true;
     else if (evt == QStringLiteral("disconnected"))
         m_connected = false;
+    else if (evt == QStringLiteral("error")) {
+        const QString msg = obj.value(QStringLiteral("msg")).toString();
+        if (msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")
+            || msg == QStringLiteral("not connected")) {
+            m_connected = false;
+        }
+    }
     emit eventReceived(obj);
     if (evt == QStringLiteral("connected"))
         readCommState();
@@ -235,5 +247,8 @@ void MmsClientBridge::onProcessFinished(int code, QProcess::ExitStatus status)
     m_connected = false;
     m_cliReady = false;
     emit logMessage(tr("CLI 已退出，code=%1").arg(code));
-    emit eventReceived(QJsonObject{ { QStringLiteral("evt"), QStringLiteral("disconnected") } });
+    emit eventReceived(QJsonObject{
+        { QStringLiteral("evt"), QStringLiteral("disconnected") },
+        { QStringLiteral("reason"), QStringLiteral("CLI_EXIT") },
+    });
 }

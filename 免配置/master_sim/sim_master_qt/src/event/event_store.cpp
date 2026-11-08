@@ -42,3 +42,17 @@ QVector<StationEvent> EventStore::snapshot() const
     QMutexLocker locker(&m_mutex);
     return m_events;
 }
+
+QVector<StationEvent> EventStore::snapshotForIed(const QString& iedName) const
+{
+    if (iedName.isEmpty())
+        return {};
+    QMutexLocker locker(&m_mutex);
+    QVector<StationEvent> out;
+    out.reserve(m_events.size());
+    for (const StationEvent& ev : m_events) {
+        if (ev.iedName == iedName)
+            out.append(ev);
+    }
+    return out;
+}

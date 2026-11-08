@@ -1,5 +1,7 @@
 # master_sim — Windows 仿真主站
 
+> **2026-11-09 修复**：子站 `station.SMCD` 的 `RptEnabled max=16/12/18` 曾把 RCB 实例放大到 **31,312** 条，`iec61850router` 启动和每 10ms 扫描被拖到 100% CPU，主站订阅/总召全部超时。已现场收敛为 `max=1`（2,152 RC / 404 LD），并修复 Java 8 下 `genconfig.jar` 的 `Files.readString`、`SubStationLD0` 域名和 LPHD 重复问题。排查与验证详见 [`../诊断-主站订阅召唤失败-修复记录.md`](../诊断-主站订阅召唤失败-修复记录.md)。
+
 从 `26579.SCD` 生成免配置下装包，经装置 **2405** 运维口下装并生效 61850。
 
 ## 快速开始
