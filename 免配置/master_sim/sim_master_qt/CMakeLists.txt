@@ -26,7 +26,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Xml Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Xml Network Concurrent)
 
 add_library(miniz_vendored STATIC
     third_party/miniz/miniz.c
@@ -83,7 +83,7 @@ target_include_directories(sim_master_qt PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz
 )
 
-target_link_libraries(sim_master_qt PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network miniz_vendored)
+target_link_libraries(sim_master_qt PRIVATE Qt6::Widgets Qt6::Xml Qt6::Network Qt6::Concurrent miniz_vendored)
 if(WIN32)
   target_link_libraries(sim_master_qt PRIVATE ws2_32)
 endif()

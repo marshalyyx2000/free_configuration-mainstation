@@ -77,10 +77,8 @@ MasterSimShell::MasterSimShell(QWidget* parent)
     tabs->addTab(m_mms, tr("61850 主站"));
     setCentralWidget(tabs);
     connect(tabs, &QTabWidget::currentChanged, this, [this, tabs](int index) {
-        if (tabs->widget(index) == m_mms) {
+        if (tabs->widget(index) == m_mms && m_ops)
             m_ops->syncConnectionFieldsToSettings();
-            m_mms->connectSubstation();
-        }
     });
 
     connect(m_ops, &OpsDeployWidget::requestJob, this, [this](LabJobKind kind) {
@@ -94,8 +92,6 @@ MasterSimShell::MasterSimShell(QWidget* parent)
     QTimer::singleShot(0, this, [this]() {
         if (m_ops)
             m_ops->syncConnectionFieldsToSettings();
-        if (m_mms)
-            m_mms->connectSubstation();
     });
 }
 

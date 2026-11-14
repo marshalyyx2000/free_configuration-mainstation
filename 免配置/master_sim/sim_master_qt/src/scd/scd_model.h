@@ -1,6 +1,7 @@
 #ifndef SCD_MODEL_H
 #define SCD_MODEL_H
 
+#include <QHash>
 #include <QString>
 #include <QVector>
 
@@ -69,8 +70,11 @@ struct RcbDescriptor {
 
 class ScdModelLoader {
 public:
+    /** @a uiFast 为 true 时不索引全 LD 的 DOI（大站启动快，点描述多为 FCDA/doName）。 */
+    static QVector<IedModel> parseModelsFromSmcd(const QString& path, bool uiFast = true);
     bool loadIedList(const QString& path);
-    bool loadSmcd(const QString& path);
+    bool loadSmcd(const QString& path, bool uiFast = true);
+    void adoptParsedModels(QVector<IedModel> models);
     /** Drop parsed SMCD / IEDList so a large station.SMCD can be rewritten on disk. */
     void clearLoadedModels();
     const QVector<IedDeviceEntry>& devices() const { return m_devices; }
@@ -102,8 +106,10 @@ public:
         const QString& ldInst = QStringLiteral("LD0"));
 
 private:
+    void rebuildModelIndex();
     QVector<IedDeviceEntry> m_devices;
     QVector<IedModel> m_models;
+    QHash<QString, int> m_modelByIed;
 };
 
 #endif

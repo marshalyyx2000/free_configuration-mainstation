@@ -3,6 +3,7 @@
  */
 #include "iec61850_client.h"
 #include "iec61850_common.h"
+#include "linked_list.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,7 +52,7 @@ static void stdout_unlock(void)
 const char* ied_error_message(IedClientError error);
 
 #define MAX_LINE 65536
-#define MAX_RCB 1024
+#define MAX_RCB 4096
 #define MAX_RCB_REF 280
 #define MAX_DS_ITEMS 512
 #define ITEM_LEN 128
@@ -785,6 +786,21 @@ static void cmd_disconnect(void) {
     cmd_disconnect_with_reason("user");
 }
 
+static void ied_from_ld(const char* ld, char* ied, size_t n)
+{
+    ied[0] = 0;
+    if (!ld || !ld[0] || n < 2)
+        return;
+    size_t len = strlen(ld);
+    size_t out = len;
+    if (len > 3 && strcmp(ld + len - 3, "LD0") == 0)
+        out = len - 3;
+    if (out >= n)
+        out = n - 1;
+    memcpy(ied, ld, out);
+    ied[out] = 0;
+}
+
 static void cmd_read_comm_state(const char* line) {
     if (!g_con) {
         emit_error("not connected");
@@ -803,19 +819,51 @@ static void cmd_read_comm_state(const char* line) {
         return;
     }
     int n = values ? MmsValue_getArraySize(values) : 0;
+    IedClientError dirErr = IED_ERROR_OK;
+    LinkedList dir = IedConnection_getDataSetDirectory(g_con, &dirErr, dsRef, NULL);
     printf("{\"evt\":\"comm_state\",\"ref\":");
     json_escape_print(stdout, dsRef);
     printf(",\"entries\":[");
+    LinkedList el = dir ? LinkedList_getNext(dir) : NULL;
     for (int i = 0; i < n; i++) {
         bool st = false;
         bool ok = comm_stval_from_item(MmsValue_getElement(values, i), &st);
+        const char* member = NULL;
+        if (el) {
+            member = (const char*)el->data;
+            el = el->next;
+        }
+        char ld[256];
+        char ied[256];
+        ld[0] = 0;
+        ied[0] = 0;
+        if (member) {
+            const char* slash = strchr(member, '/');
+            if (slash) {
+                size_t llen = (size_t)(slash - member);
+                if (llen >= sizeof(ld))
+                    llen = sizeof(ld) - 1;
+                memcpy(ld, member, llen);
+                ld[llen] = 0;
+            } else {
+                strncpy(ld, member, sizeof(ld) - 1);
+            }
+            ied_from_ld(ld, ied, sizeof(ied));
+        }
         if (i) {
             printf(",");
         }
-        printf("{\"idx\":%d,\"stVal\":%s,\"valid\":%s}", i + 1, st ? "true" : "false", ok ? "true" : "false");
+        printf("{\"idx\":%d,\"stVal\":%s,\"valid\":%s,\"ld\":", i + 1, st ? "true" : "false",
+            ok ? "true" : "false");
+        json_escape_print(stdout, ld);
+        printf(",\"ied\":");
+        json_escape_print(stdout, ied);
+        printf("}");
     }
     printf("]}\n");
     fflush(stdout);
+    if (dir)
+        LinkedList_destroy(dir);
     MmsValue_delete(values);
 }
 

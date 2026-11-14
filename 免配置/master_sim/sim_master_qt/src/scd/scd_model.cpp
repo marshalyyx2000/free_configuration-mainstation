@@ -2,6 +2,7 @@
 
 #include <QDomDocument>
 #include <QFile>
+#include <QFileInfo>
 #include <QHash>
 #include <QSet>
 #include <algorithm>
@@ -131,19 +132,28 @@ void ScdModelLoader::clearLoadedModels()
 {
     m_devices.clear();
     m_models.clear();
+    m_modelByIed.clear();
 }
 
-bool ScdModelLoader::loadSmcd(const QString& path)
+void ScdModelLoader::rebuildModelIndex()
 {
-    m_models.clear();
+    m_modelByIed.clear();
+    for (int i = 0; i < m_models.size(); ++i)
+        m_modelByIed.insert(m_models.at(i).iedName, i);
+}
+
+QVector<IedModel> ScdModelLoader::parseModelsFromSmcd(const QString& path, bool uiFast)
+{
+    QVector<IedModel> out;
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
-        return false;
+        return out;
     QDomDocument doc;
     if (!doc.setContent(&file))
-        return false;
+        return out;
     const QDomElement root = doc.documentElement();
-    QDomNodeList ieds = root.elementsByTagName(QStringLiteral("IED"));
+    const QDomNodeList ieds = root.elementsByTagName(QStringLiteral("IED"));
+    out.reserve(ieds.count());
     for (int i = 0; i < ieds.count(); ++i) {
         const QDomElement iedEl = ieds.at(i).toElement();
         const QString name = iedEl.attribute(QStringLiteral("name"));
@@ -153,14 +163,16 @@ bool ScdModelLoader::loadSmcd(const QString& path)
         model.iedName = name;
         model.desc = iedEl.attribute(QStringLiteral("desc"), name);
         QHash<QString, QString> doiDesc;
-        const QDomNodeList ldevices = iedEl.elementsByTagName(QStringLiteral("LDevice"));
-        for (int d = 0; d < ldevices.count(); ++d) {
-            const QDomElement ldEl = ldevices.at(d).toElement();
-            const QString ldInst = ldEl.attribute(QStringLiteral("inst"), QStringLiteral("LD0"));
-            for (QDomNode ch = ldEl.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
-                if (!ch.isElement())
-                    continue;
-                collectDoiDesc(ch.toElement(), ldInst, doiDesc);
+        if (!uiFast) {
+            const QDomNodeList ldevices = iedEl.elementsByTagName(QStringLiteral("LDevice"));
+            for (int d = 0; d < ldevices.count(); ++d) {
+                const QDomElement ldEl = ldevices.at(d).toElement();
+                const QString ldInst = ldEl.attribute(QStringLiteral("inst"), QStringLiteral("LD0"));
+                for (QDomNode ch = ldEl.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
+                    if (!ch.isElement())
+                        continue;
+                    collectDoiDesc(ch.toElement(), ldInst, doiDesc);
+                }
             }
         }
         const QDomNodeList ln0s = iedEl.elementsByTagName(QStringLiteral("LN0"));
@@ -203,23 +215,37 @@ bool ScdModelLoader::loadSmcd(const QString& path)
             }
         }
         if (!model.datasets.isEmpty() || !model.reports.isEmpty())
-            m_models.append(model);
+            out.append(model);
     }
+    return out;
+}
+
+bool ScdModelLoader::loadSmcd(const QString& path, bool uiFast)
+{
+    QVector<IedModel> parsed = parseModelsFromSmcd(path, uiFast);
+    if (parsed.isEmpty())
+        return false;
+    adoptParsedModels(std::move(parsed));
+    return true;
+}
+
+void ScdModelLoader::adoptParsedModels(QVector<IedModel> models)
+{
+    m_models = std::move(models);
+    rebuildModelIndex();
     for (IedDeviceEntry& d : m_devices) {
         const IedModel* im = modelFor(d.iedName);
         if (im && !im->desc.isEmpty())
             d.desc = im->desc;
     }
-    return true;
 }
 
 const IedModel* ScdModelLoader::modelFor(const QString& iedName) const
 {
-    for (const IedModel& m : m_models) {
-        if (m.iedName == iedName)
-            return &m;
-    }
-    return nullptr;
+    const auto it = m_modelByIed.constFind(iedName);
+    if (it == m_modelByIed.constEnd())
+        return nullptr;
+    return &m_models.at(it.value());
 }
 
 QString ScdModelLoader::resolveIedFromMmsRef(const QString& mmsRef) const
