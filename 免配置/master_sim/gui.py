@@ -266,9 +266,14 @@ class MasterSimApp(tk.Tk):
             messagebox.showerror("参数", "端口必须为数字")
             return
         self._log(f"探测 {host} …")
-        for name, p in (("运维", mp), ("MMS", mms)):
-            ok = tcp_reachable(host, p)
-            self._log(f"  {name} {p}: {'通' if ok else '不通'}")
+        maint_ok = tcp_reachable(host, mp, timeout=6.0)
+        mms_ok = tcp_reachable(host, mms, timeout=15.0)
+        self._log(f"  运维 {mp}: {'通' if maint_ok else '不通'}")
+        self._log(f"  MMS {mms}: {'通' if mms_ok else '不通'}")
+        if maint_ok and not mms_ok:
+            self._log("  提示：运维已通而 MMS 未通时，可能在装载大模型，请 5–15 分钟后重试。")
+        if not maint_ok and not mms_ok:
+            self._log("  提示：请确认 PC 与子站同网段且子站服务已启动。")
 
     def _log_total(self, title: str, t0: float) -> None:
         self._log(f"【总耗时】{title}: {format_duration(time.monotonic() - t0)}")

@@ -325,8 +325,10 @@ class Iec61850Panel(ttk.Frame):
         if not rpt or not self._selected_ied or not self.bridge.connected:
             return
         ds_ref = dataset_reference(self._selected_ied.ied_name, rpt.dat_set)
-        get_ref = rcb_get_reference(
-            self._selected_ied.ied_name, rpt.name, self._selected_ied.rptno, rpt.buffered
+        from ied_list import rcb_get_reference_upstream
+
+        get_ref = rcb_get_reference_upstream(
+            self._selected_ied.ied_name, rpt.name, rpt.buffered
         )
         handler = rcb_handler_reference(
             self._selected_ied.ied_name, rpt.name, rpt.buffered

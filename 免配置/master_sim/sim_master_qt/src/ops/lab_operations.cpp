@@ -12,7 +12,9 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QHostAddress>
 #include <QJsonObject>
+#include <QNetworkProxy>
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
@@ -253,9 +255,26 @@ std::optional<double> waitForMmsPort(const QString& host, int port, const QStrin
 
 bool tcpReachable(const QString& host, int port, int timeoutMs)
 {
-    QTcpSocket sock;
-    sock.connectToHost(host, static_cast<quint16>(port));
-    return sock.waitForConnected(timeoutMs);
+    const QString trimmed = host.trimmed();
+    if (trimmed.isEmpty() || port <= 0 || port > 65535)
+        return false;
+    constexpr int kAttempts = 3;
+    constexpr int kRetryGapMs = 400;
+    for (int attempt = 0; attempt < kAttempts; ++attempt) {
+        QTcpSocket sock;
+        sock.setProxy(QNetworkProxy::NoProxy);
+        const QHostAddress addr(trimmed);
+        if (addr.protocol() == QAbstractSocket::IPv4Protocol)
+            sock.connectToHost(addr, static_cast<quint16>(port));
+        else
+            sock.connectToHost(trimmed, static_cast<quint16>(port), QIODevice::ReadWrite,
+                               QAbstractSocket::IPv4Protocol);
+        if (sock.waitForConnected(timeoutMs))
+            return true;
+        if (attempt + 1 < kAttempts)
+            QThread::msleep(kRetryGapMs);
+    }
+    return false;
 }
 
 qint64 modelSizeBytes(const QString& outDir)

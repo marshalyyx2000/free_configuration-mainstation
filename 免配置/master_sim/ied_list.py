@@ -9,6 +9,9 @@ from build_config import OUT_DIR
 
 DEFAULT_IED_LIST = OUT_DIR / "IEDList.xml"
 
+# 经子站 SubStation 对上订阅时，代理模型 RptEnabled max=1，实例固定为 01（与 IEDList.rptno 下联无关）
+UPSTREAM_SUBST_RPT_INST = "1"
+
 
 @dataclass
 class IedDevice:
@@ -54,6 +57,7 @@ def logical_device_name(ied_name: str) -> str:
 
 
 def rcb_get_reference(ied_name: str, rcb_name: str, rptno: str, buffered: bool = True) -> str:
+    """对上连 SubStation 时请用 rcb_get_reference_upstream。"""
     ld = logical_device_name(ied_name)
     try:
         inst = int(rptno)
@@ -61,6 +65,10 @@ def rcb_get_reference(ied_name: str, rcb_name: str, rptno: str, buffered: bool =
         inst = 9
     br = "$BR$" if buffered else "$RP$"
     return f"{ld}/LLN0{br}{rcb_name}{inst:02d}"
+
+
+def rcb_get_reference_upstream(ied_name: str, rcb_name: str, buffered: bool = True) -> str:
+    return rcb_get_reference(ied_name, rcb_name, UPSTREAM_SUBST_RPT_INST, buffered)
 
 
 def rcb_handler_reference(ied_name: str, rcb_name: str, buffered: bool = True) -> str:

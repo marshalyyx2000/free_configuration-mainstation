@@ -1,21 +1,42 @@
 {
-  "local_fast_smcd_jiangxi": {
-    "wall_sec": 0.94,
-    "mini_kb": 1592,
-    "cfg_bytes": 21415,
-    "jar": "genconfig-fast.jar"
-  },
-  "remote_device_collapsed_cid": {
-    "host": "192.168.0.10",
-    "supervision_CID_bytes": 75730544,
-    "ied_tag_count": 1,
-    "note": "router 折叠单 IED ~70MB；bloated 路径仅保留 dsCommState(159 FCDA)+模板"
-  },
-  "remote_fast_bench": {
-    "wall_sec": 20,
+  "local_supervision_cid_full_ln": {
+    "wall_sec": 92.19,
     "exit_code": 0,
+    "cfg_bytes": 71726077,
+    "devalm_ln_count": 108,
+    "rc_count": 2152,
+    "genconfig_mode": "full-ln",
+    "ok_under_300s": true
+  },
+  "remote_arm_full_ln_first": {
+    "host": "192.168.0.10",
+    "wall_sec": 1377,
+    "exit_code": 0,
+    "cfg_bytes": 68084834,
+    "devalm_ln_count": 108,
+    "rc_count": 2152,
+    "genconfig_mode": "full-ln",
+    "java_flags": "-Xms128m -Xmx512m -XX:+UseSerialGC",
+    "ok_under_300s": false,
+    "note": "RK3568 首次全量生成约 23min，超出计划 300s；后续 stamp 命中可跳过"
+  },
+  "remote_router_listen_after_68mb_cfg": {
+    "wall_sec": 631,
+    "note": "reload_61850_router 等到 102 监听"
+  },
+  "remote_collapse_baseline": {
+    "wall_sec": 20,
     "cfg_bytes": 20616,
-    "mini_kb": 1562,
-    "ok_under_60s": true
+    "genconfig_mode": "collapse"
+  },
+  "verify_fwd_dchg_last": {
+    "host": "192.168.0.10",
+    "ied": "C_B5043X",
+    "enabled": true,
+    "gi_has_report": true,
+    "error_11_count": 0,
+    "gi_valid_value": true,
+    "dchg_tested": false,
+    "note": "订阅+GI 已通过；变位 dchg 需在 SCDPro 翻转测点复验"
   }
 }

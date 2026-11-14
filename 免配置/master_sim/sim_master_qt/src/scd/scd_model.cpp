@@ -458,7 +458,7 @@ QVector<RcbDescriptor> ScdModelLoader::allSubscribeRcbs() const
             // 对上订阅走子站代理模型，RCB 实例为 01 起；IEDList.rptno 仅用于下联装置
             d.inst = 1;
             d.handlerRef = rcbHandlerRef(dev.iedName, rpt.name, rpt.buffered, rpt.ldInst);
-            d.getRef = rcbGetRef(dev.iedName, rpt.name, QStringLiteral("1"), rpt.buffered, rpt.ldInst);
+            d.getRef = rcbGetRef(dev.iedName, rpt.name, upstreamRptInst(), rpt.buffered, rpt.ldInst);
             d.dsRef = datasetRef(dev.iedName, rpt.datSet, rpt.ldInst);
             d.trgOps = rpt.buffered ? 0x44 : 0x4C;
             d.optFlds = rpt.buffered ? 0x3900 : 0x3800;

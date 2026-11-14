@@ -87,6 +87,8 @@ public:
         const QString& ldInst = QStringLiteral("LD0"));
     static QString rcbGetRef(const QString& iedName, const QString& rcbName, const QString& rptno, bool buffered,
         const QString& ldInst = QStringLiteral("LD0"));
+    /** 经子站对上订阅时 RCB 实例恒为 01（与台账 rptno 仅下联有关）。 */
+    static QString upstreamRptInst() { return QStringLiteral("1"); }
     static QString fcdaMmsAddress(const QString& iedName, const QDomElement& fcda);
     static QString mmsItemIdFromAddress(const QString& address);
     /** MMS report evt "rcb" (typically rcbGetRef) vs SCD handler / get references. */

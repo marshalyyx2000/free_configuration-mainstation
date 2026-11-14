@@ -249,6 +249,7 @@ void MmsMasterWidget::disconnectSubstation()
     m_giTimer.stop();
     m_mms.disconnectHost();
     m_subscribedHandlers.clear();
+    m_subscribeFailures.clear();
     updateSubscribedUi();
     m_linkStatus->setText(tr("未连接"));
     m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
@@ -351,7 +352,7 @@ void MmsMasterWidget::updateSubscribedUi()
 {
     for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
         for (ReportCtrlPanel* p : it->panels)
-            p->setSubscribedHandlers(m_subscribedHandlers);
+            p->setSubscribedHandlers(m_subscribedHandlers, m_subscribeFailures);
     }
 }
 
@@ -383,6 +384,8 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
     int okCount = 0;
     int failCount = 0;
     int skippedOffline = 0;
+    const bool prevBatch = m_batchSubscribing;
+    m_batchSubscribing = true;
     for (int i = 0; i < list.size(); ++i) {
         if (prog) {
             prog->setValue(i);
@@ -390,11 +393,11 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
                 break;
         }
         const RcbDescriptor& d = list[i];
-        /* 自动恢复时只订阅通信工况为“合”的装置：现场 159 台里常有百余台
-           未投运，逐台 enable_rcb 会等 12s 超时并刷大量错误，看起来像“订阅失败”。 */
-        if (!prog && !m_commState.isEmpty() && m_commState.contains(d.iedName)
+        /* 只订阅通信工况为“合”的装置；须在 comm_state 到达后再批量订阅（见 onMmsEvent）。 */
+        if (!m_commState.isEmpty() && m_commState.contains(d.iedName)
             && !m_commState.value(d.iedName)) {
             ++skippedOffline;
+            m_subscribeFailures.remove(d.handlerRef);
             continue;
         }
         if (m_subscribedHandlers.contains(d.handlerRef)) {
@@ -430,10 +433,14 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
         disconnect(conn);
         QApplication::processEvents();
 
-        if (m_subscribedHandlers.contains(d.handlerRef))
+        if (m_subscribedHandlers.contains(d.handlerRef)) {
+            m_subscribeFailures.remove(d.handlerRef);
             okCount++;
-        else
+        } else {
+            if (!lastErr.isEmpty())
+                m_subscribeFailures.insert(d.handlerRef, lastErr);
             failCount++;
+        }
 
         if (lastErr == QStringLiteral("too many active rcbs")) {
             appendMmsLog(tr("全站订阅已达客户端 RCB 上限，已停止后续订阅"));
@@ -442,16 +449,40 @@ void MmsMasterWidget::subscribeRcbDescriptors(const QVector<RcbDescriptor>& list
     }
     if (prog)
         prog->setValue(list.size());
+    updateSubscribedUi();
     if (list.size() > 1)
         appendMmsLog(tr("批量订阅：成功 %1，失败 %2").arg(okCount).arg(failCount));
     if (skippedOffline > 0)
-        appendMmsLog(tr("自动订阅跳过 %1 个通信工况为分的装置").arg(skippedOffline));
+        appendMmsLog(tr("跳过 %1 个未通信或通信工况为分的装置").arg(skippedOffline));
+    m_batchSubscribing = prevBatch;
+}
+
+bool MmsMasterWidget::isBenignSubscribeError(const QString& msg)
+{
+    return msg == QStringLiteral("IED_UNKNOWN") || msg == QStringLiteral("OBJECT_DOES_NOT_EXIST")
+        || msg == QStringLiteral("TEMPORARILY_UNAVAILABLE") || msg == QStringLiteral("TIMEOUT")
+        || msg == QStringLiteral("OBJECT_REFERENCE_INVALID")
+        || msg == QStringLiteral("OBJECT_ACCESS_UNSUPPORTED");
 }
 
 void MmsMasterWidget::subscribeAllStation()
 {
     if (!m_mms.connected()) {
         QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
+        return;
+    }
+    if (m_commState.isEmpty()) {
+        appendMmsLog(tr("正在读取通信工况，完成后自动全站订阅…"));
+        m_pendingAutoRecover = false;
+        connect(
+            &m_mms, &MmsClientBridge::eventReceived, this,
+            [this](const QJsonObject& evt) {
+                if (evt.value(QStringLiteral("evt")).toString() != QStringLiteral("comm_state"))
+                    return;
+                subscribeAllStationInternal(true);
+            },
+            Qt::SingleShotConnection);
+        m_mms.readCommState();
         return;
     }
     subscribeAllStationInternal(true);
@@ -477,6 +508,7 @@ void MmsMasterWidget::unsubscribeAllStation()
     for (const QString& h : handlers)
         m_mms.disableRcb(h);
     m_subscribedHandlers.clear();
+    m_subscribeFailures.clear();
     updateSubscribedUi();
 }
 
@@ -511,6 +543,7 @@ void MmsMasterWidget::markLinkLost(const QString& reason)
     m_watchTimer.stop();
     m_giTimer.stop();
     m_subscribedHandlers.clear();
+    m_subscribeFailures.clear();
     updateSubscribedUi();
     m_linkStatus->setText(tr("未连接"));
     m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
@@ -527,7 +560,8 @@ void MmsMasterWidget::reconnectAndRecover()
     if (m_userDisconnect)
         return;
     if (m_mms.connected()) {
-        onConnectedAutoRecover();
+        m_pendingAutoRecover = true;
+        m_mms.readCommState();
         return;
     }
     appendMmsLog(tr("正在自动重连 SubStation…"));
@@ -538,6 +572,11 @@ void MmsMasterWidget::onConnectedAutoRecover()
 {
     if (m_userDisconnect || m_recoverRunning)
         return;
+    if (m_commState.isEmpty()) {
+        m_pendingAutoRecover = true;
+        m_mms.readCommState();
+        return;
+    }
     m_recoverRunning = true;
     m_linkLostHandled = false;
     appendMmsLog(tr("连接就绪：自动全站订阅与总召唤…"));
@@ -653,6 +692,8 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         const QString handler = evt.value(QStringLiteral("handlerRef")).toString();
         const bool wasSub = !handler.isEmpty() && m_subscribedHandlers.contains(handler);
         if (!handler.isEmpty())
+            m_subscribeFailures.remove(handler);
+        if (!handler.isEmpty())
             m_subscribedHandlers.insert(handler);
         updateSubscribedUi();
         if (!handler.isEmpty())
@@ -720,6 +761,10 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
             st.insert(devs[i].iedName, arr[i].toObject().value(QStringLiteral("stVal")).toBool());
         m_commState = st;
         m_iedTree->setCommState(st);
+        if (m_pendingAutoRecover) {
+            m_pendingAutoRecover = false;
+            onConnectedAutoRecover();
+        }
     }
     if (type == QStringLiteral("connected")) {
         const QString host = evt.value(QStringLiteral("host")).toString();
@@ -733,7 +778,7 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
             for (ReportCtrlPanel* p : it->panels)
                 p->onConnectionReady();
         }
-        onConnectedAutoRecover();
+        m_pendingAutoRecover = !m_userDisconnect;
     }
     if (type == QStringLiteral("disconnected")) {
         const QString reason = evt.value(QStringLiteral("reason")).toString();
@@ -750,6 +795,8 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         if (msg == QStringLiteral("rcb already enabled"))
             return;
         if (msg == QStringLiteral("too many active rcbs"))
+            return;
+        if ((m_batchSubscribing || m_recoverRunning) && isBenignSubscribeError(msg))
             return;
         appendMmsLog(tr("MMS 错误: %1").arg(msg));
         if (msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")) {

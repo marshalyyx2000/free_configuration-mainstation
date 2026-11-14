@@ -27,11 +27,17 @@ def _noop(_: str) -> None:
 
 
 def tcp_reachable(host: str, port: int, timeout: float = 3.0) -> bool:
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
+    host = host.strip()
+    if not host:
         return False
+    for attempt in range(3):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            if attempt < 2:
+                time.sleep(0.4)
+    return False
 
 
 def model_size_bytes(out: Path | None = None) -> int:

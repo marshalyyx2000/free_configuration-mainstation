@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $MasterSim = Split-Path -Parent $Root
 $BuildDir = Join-Path $Root "build-qt"
+# 路径含中文时 CMake/MSBuild 易失败，可用 build_local.cmd（SUBST Z:）编译。
 $BinMaster = Join-Path $MasterSim "bin"
 
 function Resolve-Cmake {

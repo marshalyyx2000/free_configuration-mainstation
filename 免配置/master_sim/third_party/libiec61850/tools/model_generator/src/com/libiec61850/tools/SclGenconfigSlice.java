@@ -18,6 +18,8 @@ public final class SclGenconfigSlice {
     private static final byte[] DTT_OPEN = "<DataTypeTemplates>".getBytes(StandardCharsets.US_ASCII);
     private static final byte[] SUBSTATION =
             "manufacturer=\"master_sim\" name=\"SubStation\"".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] SUBSTATION_NAME_ONLY =
+            "name=\"SubStation\"".getBytes(StandardCharsets.US_ASCII);
     private static final int IO_BUF = 1 << 20;
     private static final int TAIL_SEARCH = 8 * 1024 * 1024;
     private static final int BACKSCAN = 65536;
@@ -41,6 +43,9 @@ public final class SclGenconfigSlice {
                 throw new IOException("未找到 <IED");
             }
             long subName = findPattern(raf, SUBSTATION, firstIed, dttPos);
+            if (subName < 0) {
+                subName = findPattern(raf, SUBSTATION_NAME_ONLY, firstIed, dttPos);
+            }
             if (subName < 0) {
                 throw new IOException("未找到 SubStation IED");
             }
@@ -268,6 +273,9 @@ public final class SclGenconfigSlice {
             }
             long subName = findPattern(raf, SUBSTATION, firstIed, dttPos);
             if (subName < 0) {
+                subName = findPattern(raf, SUBSTATION_NAME_ONLY, firstIed, dttPos);
+            }
+            if (subName < 0) {
                 return null;
             }
             long subStart = findIedOpenBefore(raf, subName, firstIed);
@@ -279,6 +287,22 @@ public final class SclGenconfigSlice {
                 subEnd += IED_CLOSE.length;
             }
             return new long[] {subStart, subEnd};
+        }
+    }
+
+    /** SMCD 多 IED 时：第一个 IED 到 DataTypeTemplates 之前（含全部装置模型）。 */
+    public static long[] findAllIedsBeforeTemplates(File src) throws IOException {
+        long len = src.length();
+        long dttPos = findPatternFromEnd(src, DTT_OPEN, TAIL_SEARCH);
+        if (dttPos < 0) {
+            return null;
+        }
+        try (RandomAccessFile raf = new RandomAccessFile(src, "r")) {
+            long firstIed = findPattern(raf, IED_OPEN, 0, dttPos);
+            if (firstIed < 0) {
+                return null;
+            }
+            return new long[] {firstIed, dttPos};
         }
     }
 }

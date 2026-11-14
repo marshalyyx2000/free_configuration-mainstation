@@ -21,7 +21,8 @@ public:
     explicit ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWidget* parent = nullptr);
     ~ReportCtrlPanel() override;
     void setIed(const IedDeviceEntry& dev, const IedModel* model);
-    void setSubscribedHandlers(const QSet<QString>& handlers);
+    void setSubscribedHandlers(const QSet<QString>& handlers,
+        const QHash<QString, QString>& failures = QHash<QString, QString>());
     void handleMmsEvent(const QJsonObject& evt);
     void onConnectionReady();
 
@@ -75,6 +76,7 @@ private:
     IedDeviceEntry m_dev;
     const IedModel* m_model = nullptr;
     QSet<QString> m_subscribed;
+    QHash<QString, QString> m_subscribeFail;
     QHash<QString, QJsonObject> m_dsCache;
 
     QTableWidget* m_upper = nullptr;

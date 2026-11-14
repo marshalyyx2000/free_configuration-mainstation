@@ -9,6 +9,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QBrush>
+#include <QColor>
 #include <QSet>
 #include <QMessageBox>
 #include <QProgressDialog>
@@ -124,15 +126,31 @@ void ReportCtrlPanel::setIed(const IedDeviceEntry& dev, const IedModel* model)
     rebuildUpper();
 }
 
-void ReportCtrlPanel::setSubscribedHandlers(const QSet<QString>& handlers)
+void ReportCtrlPanel::setSubscribedHandlers(const QSet<QString>& handlers,
+    const QHash<QString, QString>& failures)
 {
     m_subscribed = handlers;
+    m_subscribeFail = failures;
     for (int r = 0; r < m_rows.size(); ++r) {
-        const bool sub = m_subscribed.contains(m_rows[r].handlerRef);
-        if (QTableWidgetItem* item = m_upper->item(r, 6))
-            item->setText(sub ? tr("已订阅") : QString());
-        else if (m_upper->columnCount() > 6)
-            m_upper->setItem(r, 6, new QTableWidgetItem(sub ? tr("已订阅") : QString()));
+        const QString& href = m_rows[r].handlerRef;
+        QString status;
+        QColor color;
+        if (m_subscribed.contains(href)) {
+            status = tr("已订阅");
+            color = QColor(QStringLiteral("#080"));
+        } else if (m_subscribeFail.contains(href)) {
+            status = tr("订阅失败");
+            color = QColor(QStringLiteral("#c00"));
+        }
+        QTableWidgetItem* item = m_upper->item(r, 6);
+        if (!item && m_upper->columnCount() > 6)
+            item = new QTableWidgetItem;
+        if (item) {
+            item->setText(status);
+            item->setForeground(QBrush(color));
+            if (!m_upper->item(r, 6))
+                m_upper->setItem(r, 6, item);
+        }
     }
 }
 
@@ -160,7 +178,8 @@ void ReportCtrlPanel::rebuildUpper()
         row.buffered = rpt.buffered;
         row.ldInst = rpt.ldInst;
         row.handlerRef = ScdModelLoader::rcbHandlerRef(m_dev.iedName, rpt.name, rpt.buffered, rpt.ldInst);
-        row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, QStringLiteral("1"), rpt.buffered, rpt.ldInst);
+        row.getRef = ScdModelLoader::rcbGetRef(m_dev.iedName, rpt.name, ScdModelLoader::upstreamRptInst(), rpt.buffered,
+            rpt.ldInst);
         m_rows.append(row);
 
         const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, rpt.datSet, rpt.ldInst);
@@ -175,8 +194,15 @@ void ReportCtrlPanel::rebuildUpper()
         const QString rptId = (rpt.rptId.isEmpty() || rpt.rptId == QStringLiteral("NULL")) ? QString() : rpt.rptId;
         m_upper->setItem(r, 4, new QTableWidgetItem(rptId));
         m_upper->setItem(r, 5, new QTableWidgetItem(rpt.confRev > 0 ? QString::number(rpt.confRev) : QString()));
-        const bool sub = m_subscribed.contains(row.handlerRef);
-        m_upper->setItem(r, 6, new QTableWidgetItem(sub ? tr("已订阅") : QString()));
+        QTableWidgetItem* subItem = new QTableWidgetItem;
+        if (m_subscribed.contains(row.handlerRef)) {
+            subItem->setText(tr("已订阅"));
+            subItem->setForeground(QBrush(QColor(QStringLiteral("#080"))));
+        } else if (m_subscribeFail.contains(row.handlerRef)) {
+            subItem->setText(tr("订阅失败"));
+            subItem->setForeground(QBrush(QColor(QStringLiteral("#c00"))));
+        }
+        m_upper->setItem(r, 6, subItem);
     }
     if (m_upper->rowCount() > 0 && m_upper->currentRow() < 0)
         m_upper->selectRow(0);

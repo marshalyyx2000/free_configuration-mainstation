@@ -19,6 +19,7 @@ import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
 FAST_JAR = ROOT / "master_sim/third_party/libiec61850/tools/model_generator/genconfig-fast.jar"
+GENCONFIG_RUN = ROOT / "master_sim/tools/genconfig-run.sh"
 REMOTE_BIN = "/home/admin/router/bin"
 REMOTE_JAR = f"{REMOTE_BIN}/genconfig.jar"
 VENDOR_JAR = f"{REMOTE_BIN}/genconfig.jar.vendor"
@@ -74,6 +75,14 @@ def deploy() -> int:
                 return rc
         tmp = "/tmp/genconfig-fast.upload.jar"
         sftp.put(str(FAST_JAR), tmp)
+        if GENCONFIG_RUN.is_file():
+            sftp.put(str(GENCONFIG_RUN), "/tmp/genconfig-run.upload.sh")
+            run(
+                client,
+                "cp -f /tmp/genconfig-run.upload.sh /home/admin/router/bin/genconfig-run.sh "
+                "&& sed -i 's/\\r$//' /home/admin/router/bin/genconfig-run.sh "
+                "&& chmod 755 /home/admin/router/bin/genconfig-run.sh",
+            )
         rc, out, err = run(
             client,
             f"cmp -s {tmp} {REMOTE_JAR} 2>/dev/null; "
@@ -108,14 +117,19 @@ def rollback() -> int:
 def bench_fast() -> int:
     client = connect()
     cmd = (
-        f"OUT=/tmp/bench_fast_supervision.cfg; rm -f $OUT; "
+        f"OUT=/tmp/bench_fast_supervision.cfg; rm -f $OUT $OUT.stamp; "
         f"ls -l {DEVICE_CID}; "
-        f"T0=$(date +%s); java -jar {REMOTE_JAR} {DEVICE_CID} $OUT "
+        f"T0=$(date +%s); "
+        f"if [ -x /home/admin/router/bin/genconfig-run.sh ]; then "
+        f"/home/admin/router/bin/genconfig-run.sh {DEVICE_CID} $OUT; "
+        f"else java -Xms128m -Xmx512m -XX:+UseSerialGC -jar {REMOTE_JAR} {DEVICE_CID} $OUT; fi "
         f">/tmp/bench_fast.log 2>&1; EC=$?; T1=$(date +%s); "
-        f"echo EXIT:$EC; echo WALL:$((T1-T0)); ls -l $OUT 2>/dev/null; tail -8 /tmp/bench_fast.log"
+        f"echo EXIT:$EC; echo WALL:$((T1-T0)); ls -l $OUT 2>/dev/null; "
+        f"grep -c 'LN(DevAlmGGIO' $OUT 2>/dev/null || echo DEVALM:0; "
+        f"tail -8 /tmp/bench_fast.log"
     )
     t0 = time.perf_counter()
-    rc, out, err = run(client, cmd, timeout=600)
+    rc, out, err = run(client, cmd, timeout=1900)
     wall = time.perf_counter() - t0
     print(out)
     if err:
@@ -126,8 +140,15 @@ def bench_fast() -> int:
                 wall = float(line.split(":", 1)[1])
             except ValueError:
                 pass
-    ok = "EXIT:0" in out and wall <= 60.0
-    print(f"bench_fast wall={wall:.1f}s ok={ok}")
+    devalm = 0
+    for line in out.splitlines():
+        if line.startswith("DEVALM:"):
+            try:
+                devalm = int(line.split(":", 1)[1])
+            except ValueError:
+                pass
+    ok = "EXIT:0" in out and wall <= 300.0 and devalm > 0
+    print(f"bench_full_ln wall={wall:.1f}s devalm={devalm} ok={ok}")
     client.close()
     return 0 if ok else 1
 
@@ -135,15 +156,16 @@ def bench_fast() -> int:
 def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--rollback", action="store_true")
-    p.add_argument("--bench", action="store_true", help="装置上跑加速 jar 计时")
+    p.add_argument("--bench", action="store_true", help="装置上跑 full-ln jar（≤300s + DevAlmGGIO）")
+    p.add_argument("--bench-full-ln", action="store_true", help="同 --bench")
     args = p.parse_args()
     if args.rollback:
         return rollback()
-    if args.bench:
+    if args.bench or args.bench_full_ln:
         return bench_fast()
     rc = deploy()
     if rc == 0 and args.bench is False:
-        print("部署完成。可加 --bench 验收 ≤60s。")
+        print("部署完成。可加 --bench-full-ln 验收 full-ln（墙钟≤300s + DevAlmGGIO）。")
     return rc
 
 

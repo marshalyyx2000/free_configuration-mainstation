@@ -158,8 +158,14 @@ void OpsDeployWidget::onProbe()
         return;
     }
     appendLog(tr("探测 %1 …").arg(host));
-    appendLog(tr("  运维 %1: %2").arg(mp).arg(LabOps::tcpReachable(host, mp) ? tr("通") : tr("不通")));
-    appendLog(tr("  MMS %1: %2").arg(mms).arg(LabOps::tcpReachable(host, mms) ? tr("通") : tr("不通")));
+    const bool maintOk = LabOps::tcpReachable(host, mp, 6000);
+    const bool mmsOk = LabOps::tcpReachable(host, mms, 15000);
+    appendLog(tr("  运维 %1: %2").arg(mp).arg(maintOk ? tr("通") : tr("不通")));
+    appendLog(tr("  MMS %1: %2").arg(mms).arg(mmsOk ? tr("通") : tr("不通")));
+    if (maintOk && !mmsOk)
+        appendLog(tr("  提示：运维已通而 MMS 未通时，装置可能在 genconfig/装载大模型（约 5–15 分钟），请稍后重试。"));
+    if (!maintOk && !mmsOk)
+        appendLog(tr("  提示：请确认 PC 与子站同网段、IP 无误，且子站 MaintainServer/router 已启动。"));
     appendLog(tr("  说明：端口「通」仅表示 TCP 可连；MMS 关联与订阅请切到「61850 主站」页，查看底部 MMS 日志。"));
 }
 

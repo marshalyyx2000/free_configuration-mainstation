@@ -86,6 +86,7 @@ private:
     IedDeviceEntry m_currentDev;
     QHash<QString, IedPageSet> m_pages;
     QSet<QString> m_subscribedHandlers;
+    QHash<QString, QString> m_subscribeFailures;
     QHash<QString, bool> m_commState;
     QHash<QString, QString> m_lastValues;
     QHash<QString, QVector<QJsonObject>> m_pendingReportsByIed;
@@ -97,6 +98,10 @@ private:
     bool m_userDisconnect = false;
     bool m_recoverRunning = false;
     bool m_linkLostHandled = false;
+    bool m_pendingAutoRecover = false;
+    bool m_batchSubscribing = false;
+
+    static bool isBenignSubscribeError(const QString& msg);
 };
 
 #endif

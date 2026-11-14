@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
 import com.libiec61850.scl.SclParserException;
 
 /**
- * 兼容 router 的 genconfig 入口：裁剪 CID/SMCD（头+SubStation 全量+模板），再对 SubStation 调 DynamicModelGenerator。
+ * 兼容 router 的 genconfig 入口。
+ * 默认 GENCONFIG_MODE=full-ln（DataSet 引用的全部 LN）；collapse 回退旧行为。
  */
 public class FastGenconfigMain {
 
@@ -26,9 +27,31 @@ public class FastGenconfigMain {
         }
         File src = new File(args[0]);
         File outCfg = new File(args[1]);
+        File stampFile = new File(outCfg.getAbsolutePath() + ".stamp");
+
+        if (GenconfigStamp.isUpToDate(src, outCfg, stampFile)) {
+            System.out.println("skip genconfig: supervision.cfg up to date for CID");
+            return;
+        }
+
+        String mode = System.getenv("GENCONFIG_MODE");
+        if (mode == null || mode.isEmpty()) {
+            mode = "full-ln";
+        }
+        long t0 = System.currentTimeMillis();
+        if ("collapse".equalsIgnoreCase(mode)) {
+            runCollapse(src, outCfg);
+        } else {
+            StreamingCfgGenerator.generate(src, outCfg);
+        }
+        long wallMs = System.currentTimeMillis() - t0;
+        System.out.println("genconfig wall_ms=" + wallMs + " mode=" + mode + " cfg_bytes=" + outCfg.length());
+        GenconfigStamp.writeStamp(src, stampFile);
+    }
+
+    private static void runCollapse(File src, File outCfg) throws Exception {
         File mini = File.createTempFile("supervision_mini_", ".scl");
         try {
-            long t0 = System.currentTimeMillis();
             SclGenconfigSlice.slice(src, mini);
             byte[] miniBytes = Files.readAllBytes(mini.toPath());
             String miniText = new String(miniBytes, java.nio.charset.StandardCharsets.UTF_8);
@@ -37,9 +60,6 @@ public class FastGenconfigMain {
             byte[] augmented =
                     CollapsedLDevicePruner.augmentMiniWithCollapsedDevices(src, miniBytes, dsComm);
             Files.write(mini.toPath(), augmented);
-            System.out.println(
-                    "slice " + (System.currentTimeMillis() - t0) + " ms, mini "
-                            + mini.length() + " bytes (augmented)");
             System.out.println("Dynamic model generator (fast slice + collapsed LD prune)");
             InputStream stream = new FileInputStream(mini);
             PrintStream outputStream = new PrintStream(new FileOutputStream(outCfg));

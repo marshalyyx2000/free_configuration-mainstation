@@ -916,6 +916,22 @@ static void cmd_get_dataset_directory(const char* line) {
     LinkedList_destroy(list);
 }
 
+static bool force_release_rcb_at_get_ref(const char* rcbGetRef)
+{
+    if (!g_con || !rcbGetRef || rcbGetRef[0] == 0)
+        return false;
+    IedClientError err = IED_ERROR_OK;
+    ClientReportControlBlock rcb = IedConnection_getRCBValues(g_con, &err, rcbGetRef, NULL);
+    if (err != IED_ERROR_OK || !rcb)
+        return false;
+    if (!ClientReportControlBlock_isBuffered(rcb))
+        ClientReportControlBlock_setResv(rcb, true);
+    ClientReportControlBlock_setRptEna(rcb, false);
+    IedConnection_setRCBValues(g_con, &err, rcb, RCB_ELEMENT_RPT_ENA, true);
+    ClientReportControlBlock_destroy(rcb);
+    return err == IED_ERROR_OK;
+}
+
 static void cmd_read_dataset(const char* line) {
     if (!g_con) {
         emit_error("not connected");
@@ -1032,6 +1048,11 @@ static void cmd_enable_rcb(const char* line) {
         err = IED_ERROR_OK;
         IedConnection_setRCBValues(g_con, &err, slot->rcb, mask, true);
     }
+    if (err == IED_ERROR_TEMPORARILY_UNAVAILABLE) {
+        (void)force_release_rcb_at_get_ref(rcbGetRef);
+        err = IED_ERROR_OK;
+        IedConnection_setRCBValues(g_con, &err, slot->rcb, mask, true);
+    }
     if (err != IED_ERROR_OK) {
         free_rcb_slot(slot);
         emit_after_ied_error(err);
@@ -1048,13 +1069,19 @@ static void cmd_enable_rcb(const char* line) {
 
 static void cmd_disable_rcb(const char* line) {
     char handlerRef[512];
+    char rcbGetRef[512];
     json_str(line, "handlerRef", handlerRef, sizeof(handlerRef));
+    json_str(line, "rcbGetRef", rcbGetRef, sizeof(rcbGetRef));
     if (handlerRef[0] == 0) {
         emit_error("missing handlerRef");
         return;
     }
     ActiveRcb* slot = find_rcb_by_handler(handlerRef);
     if (!slot) {
+        if (rcbGetRef[0] != 0 && force_release_rcb_at_get_ref(rcbGetRef)) {
+            emit_ok_ref("disable_rcb", handlerRef);
+            return;
+        }
         emit_error("rcb not found");
         return;
     }

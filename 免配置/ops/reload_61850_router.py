@@ -47,7 +47,8 @@ def kill_router_and_clear_cfg(client: paramiko.SSHClient) -> None:
         client,
         f"rm -f {ROUTER_LOG_DIR}/supervision.cfg "
         f"{ROUTER_LOG_DIR}/supervision.cfg.stamp "
-        f"{ROUTER_LOG_DIR}/.stamp 2>/dev/null || true",
+        f"{ROUTER_LOG_DIR}/.stamp "
+        f"/home/admin/router/config/supervision.cfg.stamp 2>/dev/null || true",
         timeout=30,
     )
 
