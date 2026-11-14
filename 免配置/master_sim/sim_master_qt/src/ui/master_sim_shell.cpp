@@ -82,11 +82,10 @@ MasterSimShell::MasterSimShell(QWidget* parent)
     });
 
     connect(m_ops, &OpsDeployWidget::requestJob, this, [this](LabJobKind kind) {
-        if (kind == LabJobKind::Generate || kind == LabJobKind::FullPipeline)
+        if (kind == LabJobKind::Generate || kind == LabJobKind::FullPipeline || kind == LabJobKind::Upload)
             m_mms->prepareForConfigGeneration();
         QMetaObject::invokeMethod(m_worker, "runJob", Qt::QueuedConnection, Q_ARG(LabJobKind, kind));
     });
-    connect(m_ops, &OpsDeployWidget::modelOutputsChanged, m_mms, &MmsMasterWidget::reloadModelData);
     connect(m_worker, &LabWorker::modelOutputsChanged, m_mms, &MmsMasterWidget::reloadModelData);
 
     QTimer::singleShot(0, this, [this]() {
@@ -95,9 +94,17 @@ MasterSimShell::MasterSimShell(QWidget* parent)
     });
 }
 
+MasterSimShell::~MasterSimShell()
+{
+    if (m_workerThread) {
+        m_workerThread->quit();
+        m_workerThread->wait(3000);
+    }
+}
+
 bool MasterSimShell::runSelfTest()
 {
-    return m_mms && m_mms->runSelfTest();
+    return m_mms && m_mms->runPrepareGenerationSafetyTest();
 }
 
 void MasterSimShell::adjustUiFont(int delta)

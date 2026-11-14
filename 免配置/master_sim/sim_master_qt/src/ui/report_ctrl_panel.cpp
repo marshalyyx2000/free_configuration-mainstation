@@ -59,9 +59,11 @@ ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWi
     auto* midBtns = new QHBoxLayout;
     m_btnReadDs = new QPushButton(tr("召唤数据集值"), lowerWrap);
     m_btnSubCurrent = new QPushButton(tr("订阅当前数据集"), lowerWrap);
+    m_btnUnsubCurrent = new QPushButton(tr("取消订阅当前数据集"), lowerWrap);
     m_btnGiCurrent = new QPushButton(tr("总召唤当前数据集"), lowerWrap);
     midBtns->addWidget(m_btnReadDs);
     midBtns->addWidget(m_btnSubCurrent);
+    midBtns->addWidget(m_btnUnsubCurrent);
     midBtns->addWidget(m_btnGiCurrent);
     midBtns->addStretch();
 
@@ -93,6 +95,7 @@ ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWi
     connect(m_upper, &QTableWidget::itemSelectionChanged, this, &ReportCtrlPanel::onUpperSelectionChanged);
     connect(m_btnReadDs, &QPushButton::clicked, this, &ReportCtrlPanel::onReadCurrentDataset);
     connect(m_btnSubCurrent, &QPushButton::clicked, this, &ReportCtrlPanel::onSubscribeCurrent);
+    connect(m_btnUnsubCurrent, &QPushButton::clicked, this, &ReportCtrlPanel::onUnsubscribeCurrent);
     connect(m_btnGiCurrent, &QPushButton::clicked, this, &ReportCtrlPanel::onGiCurrent);
     connect(m_btnAll, &QPushButton::clicked, this, &ReportCtrlPanel::onSubscribeAll);
     connect(m_btnReadAll, &QPushButton::clicked, this, &ReportCtrlPanel::onReadAllDeviceDatasets);
@@ -102,15 +105,18 @@ ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWi
         m_upper->setHorizontalHeaderLabels({ tr("文件名"), tr("大小") });
         m_btnReadDs->setVisible(false);
         m_btnSubCurrent->setVisible(false);
+        m_btnUnsubCurrent->setVisible(false);
         m_btnGiCurrent->setVisible(false);
         m_btnAll->setVisible(false);
         m_btnReadAll->setVisible(false);
     } else if (type == ReportPanelType::ReportInst) {
         m_btnReadDs->setVisible(false);
         m_btnSubCurrent->setVisible(false);
+        m_btnUnsubCurrent->setVisible(false);
         m_btnGiCurrent->setVisible(false);
         m_btnAll->setVisible(false);
     }
+    updateCurrentDatasetButtons();
 }
 
 ReportCtrlPanel::~ReportCtrlPanel()
@@ -152,6 +158,7 @@ void ReportCtrlPanel::setSubscribedHandlers(const QSet<QString>& handlers,
                 m_upper->setItem(r, 6, item);
         }
     }
+    updateCurrentDatasetButtons();
 }
 
 void ReportCtrlPanel::rebuildUpper()
@@ -208,6 +215,7 @@ void ReportCtrlPanel::rebuildUpper()
         m_upper->selectRow(0);
     if (m_upper->currentRow() >= 0)
         populateLowerFromModel(currentRow());
+    updateCurrentDatasetButtons();
 }
 
 void ReportCtrlPanel::populateLowerFromModel(const RowInfo& row)
@@ -351,6 +359,23 @@ void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& it
 void ReportCtrlPanel::onUpperSelectionChanged()
 {
     populateLowerFromModel(currentRow());
+    updateCurrentDatasetButtons();
+}
+
+void ReportCtrlPanel::updateCurrentDatasetButtons()
+{
+    if (!m_btnSubCurrent || !m_btnUnsubCurrent)
+        return;
+    if (m_type == ReportPanelType::Wave || m_type == ReportPanelType::ReportInst)
+        return;
+    const RowInfo row = currentRow();
+    const bool subbed = !row.handlerRef.isEmpty() && m_subscribed.contains(row.handlerRef);
+    const QString hi = QStringLiteral(
+        "QPushButton { background-color: #1b7a3d; color: #ffffff; font-weight: bold; }");
+    m_btnSubCurrent->setStyleSheet(subbed ? QString() : hi);
+    m_btnUnsubCurrent->setStyleSheet(subbed ? hi : QString());
+    m_btnSubCurrent->setDefault(!subbed);
+    m_btnUnsubCurrent->setDefault(subbed);
 }
 
 void ReportCtrlPanel::onReadCurrentDataset()
@@ -376,6 +401,19 @@ void ReportCtrlPanel::onSubscribeCurrent()
         { QStringLiteral("rcbGetRef"), row.getRef },
         { QStringLiteral("dsRef"), row.dsRef },
     });
+}
+
+void ReportCtrlPanel::onUnsubscribeCurrent()
+{
+    const RowInfo row = currentRow();
+    if (row.handlerRef.isEmpty() || !m_mms)
+        return;
+    if (!m_subscribed.contains(row.handlerRef)) {
+        emit logLine(tr("取消订阅未执行：当前数据集未订阅"));
+        return;
+    }
+    emit logLine(tr("取消订阅当前数据集 %1").arg(row.handlerRef));
+    m_mms->disableRcb(row.handlerRef, row.getRef);
 }
 
 void ReportCtrlPanel::onGiCurrent()

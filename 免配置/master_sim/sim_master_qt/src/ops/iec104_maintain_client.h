@@ -21,6 +21,8 @@ public:
 
     void downloadFile(const QString& remotePath, const QByteArray& data, int fileInf = 0,
         int chunkSize = 1200, int mesCount = 1);
+    void effectConfigure(int inf);
+    void stopIec61850Router();
     void effect61850();
     void uploadConfig(const QByteArray& iedList, const QByteArray& stationZip);
 

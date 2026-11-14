@@ -155,12 +155,15 @@ void MmsClientBridge::enableRcb(const QJsonObject& params)
     sendCommand(cmd);
 }
 
-void MmsClientBridge::disableRcb(const QString& handlerRef)
+void MmsClientBridge::disableRcb(const QString& handlerRef, const QString& rcbGetRef)
 {
-    sendCommand(QJsonObject{
+    QJsonObject cmd{
         { QStringLiteral("cmd"), QStringLiteral("disable_rcb") },
         { QStringLiteral("handlerRef"), handlerRef },
-    });
+    };
+    if (!rcbGetRef.isEmpty())
+        cmd.insert(QStringLiteral("rcbGetRef"), rcbGetRef);
+    sendCommand(cmd);
 }
 
 void MmsClientBridge::triggerGi(const QString& handlerRef)

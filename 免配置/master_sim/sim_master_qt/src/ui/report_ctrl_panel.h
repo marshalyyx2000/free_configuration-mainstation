@@ -38,6 +38,7 @@ signals:
 private slots:
     void onUpperSelectionChanged();
     void onSubscribeCurrent();
+    void onUnsubscribeCurrent();
     void onGiCurrent();
     void onReadCurrentDataset();
     void onSubscribeAll();
@@ -55,6 +56,7 @@ private:
     };
 
     void rebuildUpper();
+    void updateCurrentDatasetButtons();
     RowInfo currentRow() const;
     const RowInfo* rowForReport(const QString& rcb, const QString& dsRef) const;
     void ingestReportItems(const RowInfo& row, const QJsonArray& items);
@@ -83,6 +85,7 @@ private:
     QTableWidget* m_lower = nullptr;
     QPushButton* m_btnReadDs = nullptr;
     QPushButton* m_btnSubCurrent = nullptr;
+    QPushButton* m_btnUnsubCurrent = nullptr;
     QPushButton* m_btnGiCurrent = nullptr;
     QPushButton* m_btnAll = nullptr;
     QPushButton* m_btnReadAll = nullptr;

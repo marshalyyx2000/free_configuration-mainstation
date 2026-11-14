@@ -1,4 +1,7 @@
-"""南网运维 103 over IEC 60870-5-104（MaintainServer / CMH_104_Len2_NoCpu 布局）。"""
+"""南网运维 103 over IEC 60870-5-104（MaintainServer / CMH_104_Len2_Cpu 布局）。
+
+装置 BufManager ID=10421，ASDU 头为 Type VSQ COT Addr CPU FUN INF RII。
+"""
 from __future__ import annotations
 
 import socket
@@ -134,19 +137,21 @@ class Iec104MaintainClient:
     ) -> bytes:
         if rii is None:
             rii = self._next_rii()
+        # CMH_104_Len2_Cpu：CPU 在 Addr 与 FUN 之间。旧代码把 0x00 追加在
+        # RII 之后，装置把 RII 读成 INF，导致 0xCA INF=8 实际变成 INF=2。
         head = bytes(
             [
                 typ,
                 0x81,
                 cot,
                 self.cfg.asdu_addr & 0xFF,
+                0x00,
                 fun,
                 inf,
                 rii,
             ]
         )
-        pad = b"\x00" if typ in (0x69, 0x6B, 0xCA) else b""
-        return head + pad + payload
+        return head + payload
 
     def _send_s_ack(self) -> None:
         assert self.sock
@@ -251,18 +256,39 @@ class Iec104MaintainClient:
                 frames_since_ack += 1
             pos = end
 
-    def effect_61850(self) -> None:
+    def effect_configure(self, inf: int) -> None:
         rii = self._next_rii()
-        asdu = self._build_asdu(0xCA, 2, bytes([rii]), cot=0x14, rii=rii)
+        asdu = self._build_asdu(0xCA, inf, bytes([rii]), cot=0x14, rii=rii)
         resp = self._send_asdu(asdu, 0xCB)
         if not resp or resp[0] != 0xCB or resp[2] != 0x14:
             raise RuntimeError(
-                f"61850 effect failed: {resp.hex() if resp else 'empty'}"
+                f"配置命令 INF={inf} 失败: {resp.hex() if resp else 'empty'}"
             )
+
+    def stop_iec61850_router(self) -> None:
+        # 装置 INF=8 执行 path/SYS/*.sh。INF=2 的 StartProgram 杀不掉看门狗拉起的 router。
+        script = (
+            b"#!/bin/sh\n"
+            b"killall -9 /home/admin/router/bin/iec61850router >/dev/null 2>&1 || true\n"
+            b"killall -9 iec61850router >/dev/null 2>&1 || true\n"
+            b"pkill -9 -f /home/admin/router/bin/iec61850router >/dev/null 2>&1 || true\n"
+            b"rm -f /home/admin/router/router/supervision.cfg.stamp "
+            b"/home/admin/router/router/.stamp "
+            b"/home/admin/router/config/supervision.cfg.stamp\n"
+            b"exit 0\n"
+        )
+        self.download_file("/SYS/stop_iec61850router.sh", script, file_inf=0)
+        time.sleep(1.0)
+        self.effect_configure(8)
+
+    def effect_61850(self) -> None:
+        self.effect_configure(2)
 
     def upload_config(self, ied_list: bytes, station_zip: bytes) -> None:
         self.download_file("/CONF/IEDList.xml", ied_list, file_inf=1)
         time.sleep(0.2)
         self.download_file("/SMCD/station.zip", station_zip, file_inf=2)
+        time.sleep(0.2)
+        self.stop_iec61850_router()
         time.sleep(0.2)
         self.effect_61850()

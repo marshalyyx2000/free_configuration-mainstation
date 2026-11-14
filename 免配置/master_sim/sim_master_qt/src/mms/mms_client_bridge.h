@@ -23,7 +23,7 @@ public slots:
     void disconnectHost();
     void readDataSet(const QString& dsRef, const QString& requestId, const QStringList& items = {});
     void enableRcb(const QJsonObject& params);
-    void disableRcb(const QString& handlerRef);
+    void disableRcb(const QString& handlerRef, const QString& rcbGetRef = QString());
     void triggerGi(const QString& handlerRef);
     void readCommState();
     void listFiles(const QString& path, const QString& requestId);

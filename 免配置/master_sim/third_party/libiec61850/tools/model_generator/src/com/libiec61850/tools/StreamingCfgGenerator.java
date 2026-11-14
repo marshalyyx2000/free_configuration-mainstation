@@ -46,6 +46,9 @@ public final class StreamingCfgGenerator {
     }
 
     private static void runDynamicGenerator(File mini, File outCfg) throws Exception {
+        if (outCfg.exists() && !outCfg.delete()) {
+            System.err.println("WARN: could not delete old " + outCfg.getAbsolutePath());
+        }
         InputStream stream = new FileInputStream(mini);
         PrintStream outputStream = new PrintStream(new FileOutputStream(outCfg));
         int genErr = 0;

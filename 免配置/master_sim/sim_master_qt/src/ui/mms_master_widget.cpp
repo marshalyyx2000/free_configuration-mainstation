@@ -9,6 +9,7 @@
 #include "util/app_paths.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QFile>
 #include <QFileDialog>
@@ -152,7 +153,8 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
         pumpSubscribeNext();
     });
 
-    loadDefaultData();
+    if (!QCoreApplication::arguments().contains(QStringLiteral("--verify-gui")))
+        loadDefaultData();
 }
 
 bool MmsMasterWidget::runSelfTest()
@@ -160,14 +162,119 @@ bool MmsMasterWidget::runSelfTest()
     return m_model.devices().size() >= 1;
 }
 
+void MmsMasterWidget::destroyIedPages()
+{
+    for (auto it = m_pages.begin(); it != m_pages.end(); ++it) {
+        for (ReportCtrlPanel* p : it->panels) {
+            if (p)
+                p->setIed(IedDeviceEntry{}, nullptr);
+        }
+    }
+    m_pages.clear();
+    while (m_iedStack && m_iedStack->count() > 0) {
+        QWidget* w = m_iedStack->widget(0);
+        m_iedStack->removeWidget(w);
+        delete w;
+    }
+    m_currentDev = {};
+}
+
+void MmsMasterWidget::unloadStationModel(const QString& reasonLog)
+{
+    ++m_smcdLoadGen;
+    cancelSubscribeQueue();
+    m_watchTimer.stop();
+    m_giTimer.stop();
+    m_pendingReportsByIed.clear();
+    m_subscribedHandlers.clear();
+    m_subscribeFailures.clear();
+    m_lastValues.clear();
+    destroyIedPages();
+    if (m_iedTree) {
+        m_iedTree->blockSignals(true);
+        m_iedTree->setDevices({});
+        m_iedTree->blockSignals(false);
+    }
+    m_model.clearLoadedModels();
+    if (m_iedStack)
+        m_iedStack->setCurrentIndex(0);
+    if (m_iedInfo)
+        m_iedInfo->setText(tr("站级模型已卸载"));
+    if (!reasonLog.isEmpty())
+        appendMmsLog(reasonLog);
+}
+
 void MmsMasterWidget::prepareForConfigGeneration()
 {
-    // Parsing a ~100 MB SMCD keeps the file busy on some Windows setups; drop
-    // the in-memory tree before the worker thread rewrites out/station.SMCD.
-    ++m_smcdLoadGen;
-    m_model.clearLoadedModels();
-    m_iedTree->setDevices({});
-    m_iedStack->setCurrentIndex(0);
+    // 一键全流程会重写 station.SMCD 并让子站重载模型。若此时仍保持 MMS
+    // 订阅，ReportCtrlPanel 里的 IedModel* 会在 clearLoadedModels 后悬空，
+    // 随后到报即在 Qt6Core 访问违例（WER APPCRASH c0000005）。
+    const bool hadLink = m_mms.connected();
+    disconnectSubstation();
+    unloadStationModel(hadLink
+            ? tr("生成/下装前已断开 MMS 并卸载站级模型（子站将重载 supervision.cfg）")
+            : tr("生成/下装前已卸载站级模型"));
+}
+
+bool MmsMasterWidget::runPrepareGenerationSafetyTest()
+{
+    IedDeviceEntry dev;
+    dev.no = 1;
+    dev.iedName = QStringLiteral("TESTIED");
+    dev.desc = QStringLiteral("pipeline-safety");
+    dev.chPara = QStringLiteral("127.0.0.1:102");
+
+    IedModel im;
+    im.iedName = dev.iedName;
+    im.desc = dev.desc;
+    DataSetEntry ds;
+    ds.name = QStringLiteral("dsWarning");
+    ds.ldInst = QStringLiteral("LD0");
+    DataSetMember mem;
+    mem.desc = QStringLiteral("Alm1");
+    mem.address = QStringLiteral("TESTIEDLD0/LLN0.Alm1[ST]");
+    ds.members.append(mem);
+    im.datasets.append(ds);
+    ReportEntry rpt;
+    rpt.name = QStringLiteral("brcbWarning");
+    rpt.datSet = ds.name;
+    rpt.ldInst = ds.ldInst;
+    rpt.buffered = true;
+    im.reports.append(rpt);
+    m_model.adoptParsedModels(QVector<IedModel>{ im });
+
+    IedPageSet* set = pagesFor(dev.iedName);
+    if (!set || set->panels.isEmpty())
+        return false;
+    for (ReportCtrlPanel* p : set->panels)
+        p->setIed(dev, m_model.modelFor(dev.iedName));
+
+    const QJsonObject report{
+        { QStringLiteral("evt"), QStringLiteral("report") },
+        { QStringLiteral("rcb"), QStringLiteral("TESTIEDLD0/LLN0$BR$brcbWarning01") },
+        { QStringLiteral("ds"), QStringLiteral("TESTIEDLD0/LLN0$dsWarning") },
+        { QStringLiteral("items"),
+            QJsonArray{ QJsonObject{
+                { QStringLiteral("name"), QStringLiteral("TESTIEDLD0/LLN0$ST$Alm1") },
+                { QStringLiteral("idx"), 0 },
+                { QStringLiteral("value"), QStringLiteral("true") },
+                { QStringLiteral("reason"), 1 },
+            } } },
+    };
+    onMmsEvent(report);
+    prepareForConfigGeneration();
+    onMmsEvent(report);
+    onMmsEvent(QJsonObject{
+        { QStringLiteral("evt"), QStringLiteral("dataset") },
+        { QStringLiteral("ref"), QStringLiteral("TESTIEDLD0/LLN0$dsWarning") },
+        { QStringLiteral("rows"), QJsonArray{} },
+    });
+    onMmsEvent(QJsonObject{
+        { QStringLiteral("evt"), QStringLiteral("disconnected") },
+        { QStringLiteral("reason"), QStringLiteral("user") },
+    });
+    QApplication::processEvents();
+    return m_pages.isEmpty() && m_model.modelFor(dev.iedName) == nullptr;
 }
 
 void MmsMasterWidget::applySmcdModels(QVector<IedModel> models, quint64 generation)
@@ -188,16 +295,13 @@ void MmsMasterWidget::applySmcdModels(QVector<IedModel> models, quint64 generati
 
 void MmsMasterWidget::reloadModelData()
 {
-    ++m_smcdLoadGen;
-    m_model.clearLoadedModels();
+    unloadStationModel(tr("正在重新加载站级模型…"));
     m_model.loadIedList(AppPaths::iedListPath());
     m_smcdPath = AppPaths::defaultSmcdPath();
-    m_iedTree->setDevices(m_model.devices());
-    m_pages.clear();
-    while (m_iedStack->count() > 0) {
-        QWidget* w = m_iedStack->widget(0);
-        m_iedStack->removeWidget(w);
-        delete w;
+    if (m_iedTree) {
+        m_iedTree->blockSignals(true);
+        m_iedTree->setDevices(m_model.devices());
+        m_iedTree->blockSignals(false);
     }
     if (QFileInfo::exists(m_smcdPath)) {
         m_iedInfo->setText(tr("正在重新加载站级模型…"));
@@ -278,12 +382,7 @@ void MmsMasterWidget::openScd()
     if (path.isEmpty())
         return;
     m_smcdPath = path;
-    m_pages.clear();
-    while (m_iedStack->count() > 0) {
-        QWidget* w = m_iedStack->widget(0);
-        m_iedStack->removeWidget(w);
-        delete w;
-    }
+    destroyIedPages();
     m_iedInfo->setText(tr("正在加载站级模型…"));
     beginSmcdLoad(path);
 }
@@ -1071,6 +1170,11 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
             return;
         if ((m_batchSubscribing || m_recoverRunning) && isBenignSubscribeError(msg))
             return;
+        if (isBenignSubscribeError(msg)) {
+            appendMmsLog(tr("订阅失败：%1（报告控制块忙或已被占用；可先「取消全站订阅」后再订，总召请用「总召唤当前数据集」）")
+                    .arg(msg));
+            return;
+        }
         appendMmsLog(tr("MMS 错误: %1").arg(msg));
         if (msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")) {
             if (!m_userDisconnect)

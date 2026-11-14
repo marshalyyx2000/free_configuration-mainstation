@@ -11,6 +11,9 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
 
 static bool runVerifySelfTest()
 {
@@ -117,6 +120,18 @@ static bool runVerifySelfTest()
     SharedConnectionSettings conn;
     if (conn.linkWatchSec() < 30 || conn.stationGiSec() < 60)
         return false;
+
+    {
+        // After 一键全流程 unload, leftover MMS reports must not touch freed IedModel.
+        ScdModelLoader cleared;
+        EventStore leftover;
+        QHash<QString, QString> last;
+        QJsonObject evt;
+        evt.insert(QStringLiteral("evt"), QStringLiteral("report"));
+        evt.insert(QStringLiteral("rcb"), QStringLiteral("TESTIEDLD0/LLN0$BR$brcbWarning01"));
+        evt.insert(QStringLiteral("items"), QJsonArray());
+        ingestMmsReportEvent(cleared, leftover, last, evt);
+    }
     return true;
 }
 
@@ -179,6 +194,7 @@ static int runGenerateConfig(int argc, char* argv[])
 }
 
 #include "ui/master_sim_shell.h"
+#include "ui/mms_master_widget.h"
 
 #include <QApplication>
 #include <QMetaType>
@@ -195,6 +211,15 @@ int main(int argc, char* argv[])
         if (arg == QStringLiteral("--verify")) {
             QCoreApplication core(argc, argv);
             return runVerifySelfTest() ? 0 : 1;
+        }
+        if (arg == QStringLiteral("--verify-gui")) {
+            QApplication app(argc, argv);
+            QApplication::setApplicationName(QStringLiteral("免配置仿真主站"));
+            qRegisterMetaType<StationEvent>("StationEvent");
+            qRegisterMetaType<LabJobKind>("LabJobKind");
+            SharedConnectionSettings settings;
+            MmsMasterWidget w(&settings);
+            return w.runPrepareGenerationSafetyTest() ? 0 : 1;
         }
         if (arg == QStringLiteral("--generate-config"))
             return runGenerateConfig(argc, argv);

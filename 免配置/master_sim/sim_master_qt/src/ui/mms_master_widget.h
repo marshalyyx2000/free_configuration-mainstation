@@ -29,6 +29,8 @@ class MmsMasterWidget : public QWidget {
 public:
     explicit MmsMasterWidget(SharedConnectionSettings* settings, QWidget* parent = nullptr);
     bool runSelfTest();
+    /** 模拟「一键全流程」卸载模型后再灌 MMS 事件，不得崩溃。 */
+    bool runPrepareGenerationSafetyTest();
 
 public slots:
     void reloadModelData();
@@ -57,6 +59,8 @@ private:
     void loadDefaultData();
     void beginSmcdLoad(const QString& path, bool uiFast = true);
     void applySmcdModels(QVector<IedModel> models, quint64 generation);
+    void destroyIedPages();
+    void unloadStationModel(const QString& reasonLog);
     void refreshCurrentIed();
     void updateSubscribedUi();
     void appendEventFromReport(const QJsonObject& evt);

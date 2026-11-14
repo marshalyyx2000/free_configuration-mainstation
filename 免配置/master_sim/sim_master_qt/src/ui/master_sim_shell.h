@@ -13,6 +13,7 @@ class MasterSimShell : public QMainWindow {
     Q_OBJECT
 public:
     explicit MasterSimShell(QWidget* parent = nullptr);
+    ~MasterSimShell() override;
     bool runSelfTest();
 
 private:

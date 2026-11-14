@@ -179,6 +179,52 @@ def discover_cli_targets() -> tuple[str, str, str, str, str]:
     return "P_X5071A", "P_X5071APROT", "dsRelayDin1", "brcbRelayDin", "01"
 
 
+def _gui_exe() -> Path:
+    build = Path(__file__).resolve().parents[1] / "build-qt" / "Release" / "sim_master_qt.exe"
+    if build.is_file():
+        return build
+    return EXE
+
+
+def run_pipeline_safety_test(run: TestRun) -> None:
+    """一键全流程卸载模型后再灌 MMS 事件，进程不得崩溃。"""
+    exe = _gui_exe()
+    t0 = time.perf_counter()
+    if not exe.is_file():
+        run.add(
+            id="GUI-prep-01",
+            name="一键全流程卸载模型后 MMS 事件不崩溃",
+            category="运维/一键全流程",
+            passed=False,
+            duration_ms=0,
+            notes=f"missing {exe}",
+        )
+        return
+    try:
+        p = subprocess.run(
+            [str(exe), "--verify-gui"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        ok = p.returncode == 0
+        notes = f"exit={p.returncode}"
+        if p.stderr:
+            notes += f" stderr={p.stderr[-300:]}"
+    except subprocess.TimeoutExpired:
+        ok = False
+        notes = "timeout 60s"
+    run.add(
+        id="GUI-prep-01",
+        name="一键全流程卸载模型后 MMS 事件不崩溃",
+        category="运维/一键全流程",
+        passed=ok,
+        duration_ms=int((time.perf_counter() - t0) * 1000),
+        notes=notes,
+    )
+
+
 def run_cli_tests(run: TestRun) -> None:
     global IED, TEST_LD, DS_READ, RCB_NAME, RCB_INST
     run.exe = str(EXE)
@@ -433,6 +479,7 @@ def run_gui_tests(run: TestRun) -> None:
             ("遥信", "召唤数据集值", "GUI-03"),
             ("遥信", "订阅当前数据集", "GUI-04"),
             ("遥信", "总召唤当前数据集", "GUI-05"),
+            ("遥信", "取消订阅当前数据集", "GUI-05b"),
             ("遥信", "全部订阅", "GUI-06"),
             ("遥信", "读当前装置所有数据集", "GUI-07"),
             ("遥信", "召唤数据集值", "GUI-08"),
@@ -500,6 +547,14 @@ def run_gui_tests(run: TestRun) -> None:
                                 "总召唤已发送" in log1
                                 or "发送总召唤" in log1
                                 or "总召唤未执行" in log1
+                            ) and not mms_fail_in(log1)
+                        elif btn_name == "取消订阅当前数据集":
+                            time.sleep(2.5)
+                            log1 = log_delta(log_before, log_text())
+                            passed = connected and (
+                                "报告控制块已取消订阅" in log1
+                                or "取消订阅当前数据集" in log1
+                                or "取消订阅未执行" in log1
                             ) and not mms_fail_in(log1)
                         else:
                             passed = connected
@@ -775,6 +830,8 @@ def main() -> int:
         time.sleep(12)
     else:
         print("Skipping GUI (--cli-only)...")
+    print("Pipeline safety (--verify-gui)...")
+    run_pipeline_safety_test(run)
     print("CLI tests...")
     run_cli_tests(run)
     root = Path(__file__).resolve().parents[1]

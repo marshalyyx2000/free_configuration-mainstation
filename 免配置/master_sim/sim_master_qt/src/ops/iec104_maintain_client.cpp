@@ -304,16 +304,17 @@ QByteArray Iec104MaintainClient::buildAsdu(int typ, int inf, const QByteArray& p
 {
     if (rii < 0)
         rii = nextRii();
+    // 装置 BufID 10421 = CMH_104_Len2_Cpu：Type VSQ COT Addr CPU FUN INF RII。
+    // 旧实现把 0x00 追加在 RII 后，装置把 RII 当成 INF，INF=8 实际变成 INF=2。
     QByteArray head;
     head.append(char(typ));
     head.append(char(0x81));
     head.append(char(cot));
     head.append(char(m_cfg.asduAddr & 0xFF));
+    head.append(char(0x00));
     head.append(char(fun));
     head.append(char(inf));
     head.append(char(rii));
-    if (typ == 0x69 || typ == 0x6B || typ == 0xCA)
-        head.append(char(0x00));
     return head + payload;
 }
 
@@ -434,15 +435,41 @@ void Iec104MaintainClient::downloadFile(const QString& remotePath, const QByteAr
     }
 }
 
-void Iec104MaintainClient::effect61850()
+void Iec104MaintainClient::effectConfigure(int inf)
 {
     const int rii = nextRii();
     QByteArray payload;
     payload.append(char(rii));
-    QByteArray asdu = buildAsdu(0xCA, 2, payload, 0x14, 0xFF, rii);
+    QByteArray asdu = buildAsdu(0xCA, inf, payload, 0x14, 0xFF, rii);
     QByteArray resp = sendIAndRecvAsdu(asdu, 0xCB);
-    if (resp.isEmpty() || toU8(resp[0]) != 0xCB || toU8(resp[2]) != 0x14)
-        throw std::runtime_error("61850 effect failed");
+    if (resp.isEmpty() || toU8(resp[0]) != 0xCB || toU8(resp[2]) != 0x14) {
+        throw std::runtime_error(
+            QStringLiteral("配置命令 INF=%1 失败").arg(inf).toStdString());
+    }
+}
+
+void Iec104MaintainClient::stopIec61850Router()
+{
+    // 装置 HandleTakeffectConf INF=8：chmod +x 后 system() 执行 path/SYS/*.sh。
+    // 0xCA INF=2 的 StartProgram 只 kill 插件进程表里的 PID，杀不掉
+    // MaintainServer 看门狗拉起的 iec61850router，现场也没有 SSH。
+    static const char kScript[] =
+        "#!/bin/sh\n"
+        "killall -9 /home/admin/router/bin/iec61850router >/dev/null 2>&1 || true\n"
+        "killall -9 iec61850router >/dev/null 2>&1 || true\n"
+        "pkill -9 -f /home/admin/router/bin/iec61850router >/dev/null 2>&1 || true\n"
+        "rm -f /home/admin/router/router/supervision.cfg.stamp "
+        "/home/admin/router/router/.stamp "
+        "/home/admin/router/config/supervision.cfg.stamp\n"
+        "exit 0\n";
+    downloadFile(QStringLiteral("/SYS/stop_iec61850router.sh"), QByteArray(kScript), 0);
+    QThread::msleep(1000);
+    effectConfigure(8);
+}
+
+void Iec104MaintainClient::effect61850()
+{
+    effectConfigure(2);
 }
 
 void Iec104MaintainClient::uploadConfig(const QByteArray& iedList, const QByteArray& stationZip)
@@ -450,6 +477,8 @@ void Iec104MaintainClient::uploadConfig(const QByteArray& iedList, const QByteAr
     downloadFile(QStringLiteral("/CONF/IEDList.xml"), iedList, 1);
     QThread::msleep(200);
     downloadFile(QStringLiteral("/SMCD/station.zip"), stationZip, 2);
+    QThread::msleep(200);
+    stopIec61850Router();
     QThread::msleep(200);
     effect61850();
 }

@@ -1074,6 +1074,18 @@ static void cmd_enable_rcb(const char* line) {
     if (!ClientReportControlBlock_isBuffered(slot->rcb)) {
         ClientReportControlBlock_setResv(slot->rcb, true);
     }
+    /* 已被本连接或未释放占用时，先关掉再订；夹带 GI 的同一写入在子站忙时会 TEMPORARILY_UNAVAILABLE。 */
+    if (ClientReportControlBlock_getRptEna(slot->rcb)) {
+        IedClientError disErr = IED_ERROR_OK;
+        ClientReportControlBlock_setRptEna(slot->rcb, false);
+        IedConnection_setRCBValues(g_con, &disErr, slot->rcb, RCB_ELEMENT_RPT_ENA, true);
+        if (disErr != IED_ERROR_OK) {
+            free_rcb_slot(slot);
+            emit_after_ied_error(disErr);
+            return;
+        }
+        ClientReportControlBlock_setRptEna(slot->rcb, true);
+    }
 
     slot->clientDataSet = IedConnection_readDataSetValues(g_con, &err, dsRef, NULL);
     if (err != IED_ERROR_OK || !slot->clientDataSet) {
@@ -1097,13 +1109,11 @@ static void cmd_enable_rcb(const char* line) {
         RPT_OPT_SEQ_NUM | RPT_OPT_TIME_STAMP | RPT_OPT_REASON_FOR_INCLUSION | RPT_OPT_DATA_SET
             | RPT_OPT_DATA_REFERENCE | RPT_OPT_CONF_REV);
     ClientReportControlBlock_setRptEna(slot->rcb, true);
-    ClientReportControlBlock_setGI(slot->rcb, true);
 
     IedConnection_installReportHandler(
         g_con, slot->rcbGetRef, ClientReportControlBlock_getRptId(slot->rcb), reportCallback, slot);
 
-    uint32_t mask = RCB_ELEMENT_DATSET | RCB_ELEMENT_TRG_OPS | RCB_ELEMENT_OPT_FLDS | RCB_ELEMENT_RPT_ENA
-        | RCB_ELEMENT_GI;
+    uint32_t mask = RCB_ELEMENT_DATSET | RCB_ELEMENT_TRG_OPS | RCB_ELEMENT_OPT_FLDS | RCB_ELEMENT_RPT_ENA;
     if (!ClientReportControlBlock_isBuffered(slot->rcb)) {
         mask |= RCB_ELEMENT_RESV;
     }
@@ -1116,6 +1126,9 @@ static void cmd_enable_rcb(const char* line) {
     if (err == IED_ERROR_TEMPORARILY_UNAVAILABLE) {
         (void)force_release_rcb_at_get_ref(rcbGetRef);
         err = IED_ERROR_OK;
+        mask = RCB_ELEMENT_RPT_ENA;
+        if (!ClientReportControlBlock_isBuffered(slot->rcb))
+            mask |= RCB_ELEMENT_RESV;
         IedConnection_setRCBValues(g_con, &err, slot->rcb, mask, true);
     }
     if (err != IED_ERROR_OK) {

@@ -220,9 +220,8 @@ std::optional<double> waitForMmsPort(const QString& host, int port, const QStrin
             QThread::msleep(2000);
         if (tcpReachable(host, port, 1500)) {
             log(QStringLiteral(
-                "102 一直未关闭：旧 iec61850router 未退出，新 IEDList（172.16）未装载。"
-                "请设置 SUBST_PASS 后运行 免配置/ops/reload_61850_router.py，"
-                "或在装置上 kill router 并删除 supervision.cfg/.stamp 后再次下装生效。"));
+                "102 一直未关闭：装置未结束旧 iec61850router，新台账未装载。"
+                "主站已通过运维规约下发 SYS 补丁结束旧进程；若仍占用 102，请重新「下装并生效」。"));
             return std::nullopt;
         }
         log(QStringLiteral("102 已关闭，开始计时等待重新生成/装载…"));
@@ -373,6 +372,20 @@ std::optional<double> runUpload(const QString& host, int maintainPort, const QSt
                 client->downloadFile(QStringLiteral("/SMCD/station.zip"), zipp, 2);
                 return 0;
             });
+        timer.run(QStringLiteral("结束旧 iec61850router ASDU0xCA INF=8"), [&]() {
+            client->stopIec61850Router();
+            return 0;
+        });
+        lg(QStringLiteral("已下装 SYS 补丁并下发 INF=8，等待 102 关闭…"));
+        {
+            const qint64 dropDeadline = QDateTime::currentMSecsSinceEpoch() + 30000;
+            while (QDateTime::currentMSecsSinceEpoch() < dropDeadline && tcpReachable(host, mmsPort, 1500))
+                QThread::msleep(500);
+            if (tcpReachable(host, mmsPort, 1500))
+                lg(QStringLiteral("警告: 30 秒内 102 仍在监听，仍下发 61850 生效"));
+            else
+                lg(QStringLiteral("102 已关闭，旧 iec61850router 已退出"));
+        }
         timer.run(QStringLiteral("配置生效 ASDU0xCA INF=2"), [&]() {
             client->effect61850();
             return 0;
@@ -398,7 +411,7 @@ std::optional<double> runUpload(const QString& host, int maintainPort, const QSt
             if (const auto n = readCommStateEntryCount(host, mmsPort, lg)) {
                 if (*n != expectedDevices) {
                     lg(QStringLiteral(
-                        "通信工况条目 %1 ≠ 台账 %2：装置仍在用旧路由配置。请执行 reload_61850_router.py。")
+                        "通信工况条目 %1 ≠ 台账 %2：装置仍在用旧路由配置，请重新「下装并生效」。")
                             .arg(*n)
                             .arg(expectedDevices));
                 }

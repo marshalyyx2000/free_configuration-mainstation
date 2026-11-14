@@ -116,27 +116,13 @@ def log_ied_list_subnets(out: Path, log: LogFn = _noop) -> None:
 
 
 def maybe_reload_stale_router(host: str, log: LogFn = _noop) -> bool:
-    """102 在旧 router 上常不随 ASDU 生效退出；有 SUBST_PASS 时调用 ops/reload_61850_router.py。"""
-    if not os.environ.get("SUBST_PASS"):
-        log(
-            "装置 102 未关闭（旧 router 未退出），无法自动装载新台账。"
-            "请设置 SUBST_PASS 后运行: python 免配置/ops/reload_61850_router.py"
-        )
-        return False
-    script = ROOT.parent / "ops" / "reload_61850_router.py"
-    log("尝试通过 SSH 结束旧 router 并重新生效 …")
-    r = subprocess.run(
-        [sys.executable, str(script)],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
+    """现场无 SSH。停旧 router 已改由运维 104 下装 SYS 补丁 + ASDU 0xCA INF=8。"""
+    del host
+    log(
+        "102 未关闭：装置未结束旧 iec61850router。"
+        "主站应已通过运维规约下发 SYS 补丁；请重新「下装并生效」。"
     )
-    if r.stdout:
-        log(r.stdout.strip())
-    if r.stderr:
-        log(r.stderr.strip())
-    return r.returncode == 0
+    return False
 
 
 def verify_comm_state_count(
@@ -150,7 +136,7 @@ def verify_comm_state_count(
     if count != expected:
         log(
             "台账未在运行中的 router 生效：仍为旧通信工况。"
-            "请执行 reload_61850_router.py 或手动 kill iec61850router 后再次生效"
+            "请重新「下装并生效」（主站会经运维规约结束旧 iec61850router）。"
         )
         return False
     return True
@@ -180,15 +166,9 @@ def wait_for_mms_port(
         while time.monotonic() < drop_deadline and tcp_reachable(host, port, timeout=1.5):
             time.sleep(2.0)
         if tcp_reachable(host, port, timeout=1.5):
-            if maybe_reload_stale_router(host, log):
-                drop_deadline = time.monotonic() + 600
-                while time.monotonic() < drop_deadline and tcp_reachable(host, port, timeout=1.5):
-                    time.sleep(2.0)
+            maybe_reload_stale_router(host, log)
             if tcp_reachable(host, port, timeout=1.5):
-                log(
-                    "102 一直未关闭，新 IEDList/SMCD 未装载。"
-                    "请 kill iec61850router 并清除 supervision 缓存后再次「下装并生效」。"
-                )
+                log("102 一直未关闭，新 IEDList/SMCD 未装载。请重新「下装并生效」。")
                 return None
         log("102 已关闭，开始计时等待重新生成/装载…")
 
@@ -274,6 +254,18 @@ def run_upload(
             f"下装 station.zip（模型 {model_mb}）",
             lambda: client.download_file("/SMCD/station.zip", zipp, file_inf=2),
         )
+        timer.run(
+            "结束旧 iec61850router ASDU0xCA INF=8",
+            lambda: client.stop_iec61850_router(),
+        )
+        log("已下装 SYS 补丁并下发 INF=8，等待 102 关闭…")
+        drop_deadline = time.monotonic() + 30
+        while time.monotonic() < drop_deadline and tcp_reachable(host, mms_port, timeout=1.5):
+            time.sleep(0.5)
+        if tcp_reachable(host, mms_port, timeout=1.5):
+            log("警告: 30 秒内 102 仍在监听，仍下发 61850 生效")
+        else:
+            log("102 已关闭，旧 iec61850router 已退出")
         timer.run(
             "配置生效 ASDU0xCA INF=2",
             lambda: client.effect_61850(),
