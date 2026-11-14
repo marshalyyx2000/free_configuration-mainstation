@@ -246,6 +246,8 @@ QByteArray sanitizeSclForGenconfig(QByteArray data)
     data.replace("intgPd=\"\"", "intgPd=\"0\"");
     data.replace("bufTime=\"\"", "bufTime=\"0\"");
     data.replace("confRev=\"\"", "confRev=\"1\"");
+    // 部分 ICD 把 LD0 写成 LDO（字母 O）；convert2CID 拼 IED 名后变成 P_xxxALDO/
+    data.replace("LDO/LLN0$", "LD0/LLN0$");
     return clampRptEnabledMax(data);
 }
 

@@ -125,6 +125,20 @@ static void emit_ok(const char* cmd) {
     emit_ok_ref(cmd, NULL);
 }
 
+static void emit_rcb_enabled(const char* handlerRef, const char* rcbGetRef, int already)
+{
+    stdout_lock();
+    printf("{\"evt\":\"rcb_enabled\",\"handlerRef\":");
+    json_escape_print(stdout, handlerRef ? handlerRef : "");
+    printf(",\"rcbGetRef\":");
+    json_escape_print(stdout, rcbGetRef ? rcbGetRef : "");
+    if (already)
+        printf(",\"already\":true");
+    printf("}\n");
+    fflush(stdout);
+    stdout_unlock();
+}
+
 static const char* json_str(const char* line, const char* key, char* buf, size_t bufsz) {
     buf[0] = 0;
     if (!line || !key) {
@@ -821,6 +835,7 @@ static void cmd_read_comm_state(const char* line) {
     int n = values ? MmsValue_getArraySize(values) : 0;
     IedClientError dirErr = IED_ERROR_OK;
     LinkedList dir = IedConnection_getDataSetDirectory(g_con, &dirErr, dsRef, NULL);
+    stdout_lock();
     printf("{\"evt\":\"comm_state\",\"ref\":");
     json_escape_print(stdout, dsRef);
     printf(",\"entries\":[");
@@ -862,6 +877,7 @@ static void cmd_read_comm_state(const char* line) {
     }
     printf("]}\n");
     fflush(stdout);
+    stdout_unlock();
     if (dir)
         LinkedList_destroy(dir);
     MmsValue_delete(values);
@@ -878,6 +894,7 @@ static void cmd_get_ld_list(void) {
         emit_after_ied_error(err);
         return;
     }
+    stdout_lock();
     printf("{\"evt\":\"ld_list\",\"devices\":[");
     LinkedList el = list;
     int first = 1;
@@ -891,6 +908,7 @@ static void cmd_get_ld_list(void) {
     }
     printf("]}\n");
     fflush(stdout);
+    stdout_unlock();
     LinkedList_destroy(list);
 }
 
@@ -911,6 +929,7 @@ static void cmd_get_datasets(const char* line) {
         emit_after_ied_error(err);
         return;
     }
+    stdout_lock();
     printf("{\"evt\":\"datasets\",\"ld\":");
     json_escape_print(stdout, ld);
     printf(",\"names\":[");
@@ -926,6 +945,7 @@ static void cmd_get_datasets(const char* line) {
     }
     printf("]}\n");
     fflush(stdout);
+    stdout_unlock();
     LinkedList_destroy(list);
 }
 
@@ -946,6 +966,7 @@ static void cmd_get_dataset_directory(const char* line) {
         emit_after_ied_error(err);
         return;
     }
+    stdout_lock();
     printf("{\"evt\":\"dataset_directory\",\"ref\":");
     json_escape_print(stdout, ref);
     printf(",\"members\":[");
@@ -961,6 +982,7 @@ static void cmd_get_dataset_directory(const char* line) {
     }
     printf("]}\n");
     fflush(stdout);
+    stdout_unlock();
     LinkedList_destroy(list);
 }
 
@@ -1026,12 +1048,7 @@ static void cmd_enable_rcb(const char* line) {
 
     ActiveRcb* existing = find_rcb_by_handler(handlerRef);
     if (existing) {
-        printf("{\"evt\":\"rcb_enabled\",\"handlerRef\":");
-        json_escape_print(stdout, handlerRef);
-        printf(",\"rcbGetRef\":");
-        json_escape_print(stdout, existing->rcbGetRef);
-        printf(",\"already\":true}\n");
-        fflush(stdout);
+        emit_rcb_enabled(handlerRef, existing->rcbGetRef, 1);
         return;
     }
     ActiveRcb* slot = alloc_rcb_slot();
@@ -1107,12 +1124,7 @@ static void cmd_enable_rcb(const char* line) {
         return;
     }
 
-    printf("{\"evt\":\"rcb_enabled\",\"handlerRef\":");
-    json_escape_print(stdout, handlerRef);
-    printf(",\"rcbGetRef\":");
-    json_escape_print(stdout, rcbGetRef);
-    printf("}\n");
-    fflush(stdout);
+    emit_rcb_enabled(handlerRef, rcbGetRef, 0);
 }
 
 static void cmd_disable_rcb(const char* line) {
@@ -1161,6 +1173,7 @@ static void cmd_gi(const char* line) {
 }
 
 static void emit_files_json(const char* path, LinkedList list, const char* warn) {
+    stdout_lock();
     printf("{\"evt\":\"files\",\"path\":");
     json_escape_print(stdout, path);
     printf(",\"entries\":[");
@@ -1186,6 +1199,7 @@ static void emit_files_json(const char* path, LinkedList list, const char* warn)
     }
     printf("}\n");
     fflush(stdout);
+    stdout_unlock();
 }
 
 static void cmd_list_files(const char* line) {
@@ -1298,8 +1312,10 @@ static void dispatch(const char* line) {
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
     char line[MAX_LINE];
+    stdout_lock();
     printf("{\"evt\":\"ready\"}\n");
     fflush(stdout);
+    stdout_unlock();
     while (fgets(line, sizeof(line), stdin)) {
         size_t len = strlen(line);
         while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {

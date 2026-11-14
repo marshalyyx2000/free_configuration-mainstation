@@ -141,8 +141,10 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
         if (m_subIndex >= 0 && m_subIndex < m_subQueue.size()) {
             const QString ied = m_subQueue[m_subIndex].iedName;
             const int n = ++m_subFailByIed[ied];
-            if (n == 1)
-                appendMmsLog(tr("订阅失败 %1：TIMEOUT").arg(ied));
+            if (n == 1) {
+                const QString ref = m_subQueue[m_subIndex].getRef;
+                appendMmsLog(tr("订阅失败 %1：TIMEOUT（%2）").arg(ied, ref));
+            }
         }
         m_subFail++;
         m_subWaitingHandler.clear();
@@ -478,7 +480,8 @@ bool MmsMasterWidget::shouldSkipOffline(const QString& iedName) const
     return !m_commState.value(iedName);
 }
 
-void MmsMasterWidget::startSubscribeQueue(const QVector<RcbDescriptor>& list, bool showProgress, bool giAfter)
+void MmsMasterWidget::startSubscribeQueue(const QVector<RcbDescriptor>& list, bool showProgress, bool giAfter,
+    int skippedNonProxy)
 {
     if (!m_mms.connected() || list.isEmpty())
         return;
@@ -518,6 +521,8 @@ void MmsMasterWidget::startSubscribeQueue(const QVector<RcbDescriptor>& list, bo
             .arg(list.size())
             .arg(onlineEst)
             .arg(m_commStateAligned ? tr("是") : tr("否（不按分跳过）")));
+    if (skippedNonProxy > 0)
+        appendMmsLog(tr("已跳过非代理 LD（PIGO/RPIT 等 GOOSE）%1 条，不向子站 enable").arg(skippedNonProxy));
     if (showProgress) {
         m_subProg = new QProgressDialog(tr("全站订阅…"), tr("取消"), 0, list.size(), this);
         m_subProg->setWindowModality(Qt::WindowModal);
@@ -660,7 +665,8 @@ void MmsMasterWidget::subscribeAllStationInternal(bool showProgress, bool giAfte
 {
     if (!m_mms.connected())
         return;
-    startSubscribeQueue(m_model.allSubscribeRcbs(), showProgress, giAfter);
+    int skippedNonProxy = 0;
+    startSubscribeQueue(m_model.allSubscribeRcbs(&skippedNonProxy), showProgress, giAfter, skippedNonProxy);
 }
 
 void MmsMasterWidget::unsubscribeAllStation()
@@ -1043,8 +1049,10 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
                 ied = m_subQueue[m_subIndex].iedName;
             if (!ied.isEmpty()) {
                 const int n = ++m_subFailByIed[ied];
-                if (n == 1)
-                    appendMmsLog(tr("订阅失败 %1：%2").arg(ied, msg));
+                if (n == 1) {
+                    const QString ref = m_subQueue[m_subIndex].getRef;
+                    appendMmsLog(tr("订阅失败 %1：%2（%3）").arg(ied, msg, ref));
+                }
             }
             ++m_subFail;
             if (msg == QStringLiteral("too many active rcbs")) {

@@ -208,6 +208,8 @@ def _sanitize_scl_for_genconfig(text: str) -> str:
     text = text.replace('bufTime=""', 'bufTime="0"')
     text = text.replace('confRev=""', 'confRev="1"')
     text = re.sub(r'(<RptEnabled\b[^>]*\bmax=")[^"]*(")', r"\g<1>1\g<2>", text)
+    # 部分 ICD 把 LD0 写成 LDO（字母 O）；convert2CID 拼 IED 名后变成 P_xxxALDO/
+    text = text.replace("LDO/LLN0$", "LD0/LLN0$")
     return text
 
 

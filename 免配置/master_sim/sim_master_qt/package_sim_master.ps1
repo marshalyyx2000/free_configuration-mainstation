@@ -25,11 +25,24 @@ New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 if (-not $env:QT6_DIR) { $env:QT6_DIR = "C:\Qt\6.7.3\msvc2019_64" }
 
 $buildLib = Join-Path $MasterSim "build_libiec61850.ps1"
-# Only (re)build the MMS CLI when it is missing: the vendored libiec61850 build
-# emits CMake deprecation warnings on stderr, which PowerShell turns into a
-# terminating error under $ErrorActionPreference = "Stop".
+# Rebuild CLI so stdout_lock / protocol fixes ship. Prefer incremental native/build;
+# full libiec61850 CMake deprecation warnings on stderr abort under Stop EAP.
 $cliBin = Join-Path $MasterSim "bin\mms_master_cli.exe"
-if (-not (Test-Path $cliBin) -and (Test-Path $buildLib)) { & $buildLib | Out-Host }
+$cliCache = Join-Path $MasterSim "native\build"
+$prevEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+if (Test-Path (Join-Path $cliCache "CMakeCache.txt")) {
+    cmake --build $cliCache --config Release --target mms_master_cli | Out-Host
+    $builtCli = Join-Path $cliCache "Release\mms_master_cli.exe"
+    if (Test-Path $builtCli) {
+        New-Item -ItemType Directory -Force -Path (Split-Path $cliBin) | Out-Null
+        Copy-Item -Force $builtCli $cliBin
+    }
+} elseif (Test-Path $buildLib) {
+    & $buildLib | Out-Host
+}
+$ErrorActionPreference = $prevEap
+if (-not (Test-Path $cliBin)) { throw "mms_master_cli.exe missing after rebuild" }
 
 & (Join-Path $Root "build_sim_master.ps1") -Configuration Release -AppVersion $ver
 

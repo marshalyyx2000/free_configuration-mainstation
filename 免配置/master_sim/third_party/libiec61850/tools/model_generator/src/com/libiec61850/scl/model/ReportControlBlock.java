@@ -56,6 +56,8 @@ public class ReportControlBlock {
 		if (this.rptID != null) {
 			if (this.rptID.equals(""))
 				this.rptID = null;
+			else
+				this.rptID = com.libiec61850.tools.SclTypoFix.fixLdZeroLetterO(this.rptID);
 		}
 		
 		String confRefStr = ParserUtils.parseAttribute(reportControlNode, "confRev");

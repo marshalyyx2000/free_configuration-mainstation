@@ -465,10 +465,30 @@ bool ScdModelLoader::reportMatchesPanel(const ReportEntry& rpt, ReportPanelType 
     return datasetMatchesPanel(rpt.datSet, type);
 }
 
-QVector<RcbDescriptor> ScdModelLoader::allSubscribeRcbs() const
+bool ScdModelLoader::isUpstreamProxyLd(const QString& iedName, const QString& ldInst)
+{
+    const QString inst = ldInst.isEmpty() ? QStringLiteral("LD0") : ldInst;
+    static const QString kKeep[] = {
+        QStringLiteral("LD0"),
+        QStringLiteral("PROT"),
+        QStringLiteral("CTRL"),
+        QStringLiteral("MEAS"),
+        QStringLiteral("RCD"),
+    };
+    for (const QString& suffix : kKeep) {
+        if (inst == suffix)
+            return true;
+        if (!iedName.isEmpty() && inst == iedName + suffix)
+            return true;
+    }
+    return false;
+}
+
+QVector<RcbDescriptor> ScdModelLoader::allSubscribeRcbs(int* skippedNonProxy) const
 {
     QVector<RcbDescriptor> out;
     QSet<QString> seenHandler;
+    int skipped = 0;
     for (const IedDeviceEntry& dev : m_devices) {
         const IedModel* model = modelFor(dev.iedName);
         if (!model)
@@ -476,6 +496,10 @@ QVector<RcbDescriptor> ScdModelLoader::allSubscribeRcbs() const
         for (const ReportEntry& rpt : model->reports) {
             if (rpt.datSet.isEmpty() || rpt.name.isEmpty())
                 continue;
+            if (!isUpstreamProxyLd(dev.iedName, rpt.ldInst)) {
+                ++skipped;
+                continue;
+            }
             RcbDescriptor d;
             d.iedName = dev.iedName;
             d.rcbName = rpt.name;
@@ -494,5 +518,7 @@ QVector<RcbDescriptor> ScdModelLoader::allSubscribeRcbs() const
             out.append(d);
         }
     }
+    if (skippedNonProxy)
+        *skippedNonProxy = skipped;
     return out;
 }

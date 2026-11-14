@@ -92,6 +92,8 @@ public final class FullLnLDevicePruner {
             f.fullLdInst.add(prefix + "PROT");
             f.fullLdInst.add(prefix + "CTRL");
             f.fullLdInst.add(prefix + "MEAS");
+            /* RCD（录波）含 brcbRelayRec 等 MMS RCB；61850 未禁止代理导出，必须生成。 */
+            f.fullLdInst.add(prefix + "RCD");
         }
         return f;
     }
@@ -106,7 +108,11 @@ public final class FullLnLDevicePruner {
         if (filter.fullLdInst.contains(currentIed + ldInst)) {
             return true;
         }
-        return filter.iedNames.contains(currentIed) && "LD0".equals(ldInst);
+        if (!filter.iedNames.contains(currentIed)) {
+            return false;
+        }
+        return "LD0".equals(ldInst) || "RCD".equals(ldInst)
+            || "PROT".equals(ldInst) || "CTRL".equals(ldInst) || "MEAS".equals(ldInst);
     }
 
     static List<String> streamExtractLDevices(File cid, long rangeStart, long rangeEnd, WantLdFilter filter)
@@ -142,9 +148,12 @@ public final class FullLnLDevicePruner {
                 if (wantDevice(filter, currentIed, inst)) {
                     String body = readUtf8Range(raf, hit, ldEnd);
                     String outInst = inst;
-                    if ("LD0".equals(inst) && currentIed != null && !currentIed.equals("SubStation")) {
-                        outInst = currentIed + "LD0";
-                        body = body.replaceFirst("inst=\"LD0\"", "inst=\"" + outInst + "\"");
+                    if (currentIed != null && !currentIed.equals("SubStation")
+                            && ("LD0".equals(inst) || "RCD".equals(inst))
+                            && !inst.startsWith(currentIed)) {
+                        outInst = currentIed + inst;
+                        body = body.replaceFirst("inst=\"" + inst + "\"", "inst=\"" + outInst + "\"");
+                        body = body.replace("ldInst=\"" + inst + "\"", "ldInst=\"" + outInst + "\"");
                     }
                     String pruned = pruneLDeviceFullLn(body, outInst);
                     if (pruned != null) {
@@ -257,8 +266,11 @@ public final class FullLnLDevicePruner {
         }
         byte[] buf = new byte[len];
         raf.seek(start);
-        raf.readFully(buf);
-        return new String(buf, StandardCharsets.UTF_8);
+        int n = raf.read(buf);
+        if (n <= 0) {
+            return "";
+        }
+        return new String(buf, 0, n, StandardCharsets.UTF_8);
     }
 
     static String pruneLDeviceFullLn(String raw, String inst) {
@@ -274,7 +286,7 @@ public final class FullLnLDevicePruner {
         }
         Matcher rc = RC_TAG.matcher(ln0Inner);
         while (rc.find()) {
-            ln0Kids.append("\t\t\t\t\t\t").append(rc.group()).append("\n");
+            ln0Kids.append("\t\t\t\t\t\t").append(SclTypoFix.fixLdZeroLetterO(rc.group())).append("\n");
         }
         StringBuilder lns = new StringBuilder();
         Matcher lphd = LN_LPHD.matcher(raw);
@@ -300,14 +312,15 @@ public final class FullLnLDevicePruner {
     }
 
     private static String toSelfClosingLphd(String lnBlock) {
-        if (lnBlock.trim().endsWith("/>")) {
-            return lnBlock.trim();
-        }
         int gt = lnBlock.indexOf('>');
         if (gt < 0) {
             return lnBlock;
         }
-        return lnBlock.substring(0, gt + 1).replaceFirst(">$", "/>");
+        String open = lnBlock.substring(0, gt + 1).trim();
+        if (open.endsWith("/>")) {
+            return open;
+        }
+        return open.substring(0, open.length() - 1) + "/>";
     }
 
     private static String attrValue(String tag, String name) {

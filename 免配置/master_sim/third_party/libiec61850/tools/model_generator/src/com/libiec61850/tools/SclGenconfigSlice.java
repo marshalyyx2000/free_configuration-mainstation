@@ -21,7 +21,7 @@ public final class SclGenconfigSlice {
     private static final byte[] SUBSTATION_NAME_ONLY =
             "name=\"SubStation\"".getBytes(StandardCharsets.US_ASCII);
     private static final int IO_BUF = 1 << 20;
-    private static final int TAIL_SEARCH = 8 * 1024 * 1024;
+    private static final int TAIL_SEARCH = 32 * 1024 * 1024;
     private static final int BACKSCAN = 65536;
     private static final long BLOATED_IED = 4L * 1024 * 1024;
     private static final Pattern DS_COMM =

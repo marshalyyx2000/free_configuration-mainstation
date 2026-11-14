@@ -64,7 +64,8 @@ private:
     void appendRcbControlEvent(const QString& category, const QString& handlerRef, const QString& summary);
     void appendDeviceEvent(const QString& iedName, const QString& category, const QString& dsRef,
         const QString& summary);
-    void startSubscribeQueue(const QVector<RcbDescriptor>& list, bool showProgress, bool giAfter);
+    void startSubscribeQueue(const QVector<RcbDescriptor>& list, bool showProgress, bool giAfter,
+        int skippedNonProxy = 0);
     void pumpSubscribeNext();
     void finishSubscribeQueue();
     void cancelSubscribeQueue();

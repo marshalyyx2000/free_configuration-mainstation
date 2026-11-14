@@ -57,6 +57,8 @@ public final class CollapsedLDevicePruner {
             forExtract.add(prefix + "PROT");
             forExtract.add(prefix + "CTRL");
             forExtract.add(prefix + "MEAS");
+            forExtract.add(prefix + "RCD");
+            forExtract.add("RCD");
         }
         wantLd = forExtract;
         long[] bounds = SclGenconfigSlice.findSubStationIedBounds(cid);
@@ -124,7 +126,7 @@ public final class CollapsedLDevicePruner {
         }
         Matcher rc = RC_TAG.matcher(ln0Inner);
         while (rc.find()) {
-            ln0Kids.append("\t\t\t\t\t\t").append(rc.group()).append("\n");
+            ln0Kids.append("\t\t\t\t\t\t").append(SclTypoFix.fixLdZeroLetterO(rc.group())).append("\n");
         }
         /* 代理侧只保留 LPHD + LN0（数据集/报告控制块），保持模型轻量、启动快。
            FCDA 指向的 DO/DA 不在本地模型中，报告值会由主站侧按数据引用展示；

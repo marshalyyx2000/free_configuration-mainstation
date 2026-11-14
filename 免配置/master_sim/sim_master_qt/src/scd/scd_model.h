@@ -81,7 +81,10 @@ public:
     const IedModel* modelFor(const QString& iedName) const;
     /** Longest IEDList ied_name prefix matching MMS ref (e.g. E1Q1SB41PROT/... → E1Q1SB41). */
     QString resolveIedFromMmsRef(const QString& mmsRef) const;
-    QVector<RcbDescriptor> allSubscribeRcbs() const;
+    /** 子站代理 MMS 模型：LD0/PROT/CTRL/MEAS/RCD。PIGO/RPIT 为 GOOSE LD，不 enable。
+     *  @a skippedNonProxy 非空时写入被跳过的 ReportControl 条数。 */
+    QVector<RcbDescriptor> allSubscribeRcbs(int* skippedNonProxy = nullptr) const;
+    static bool isUpstreamProxyLd(const QString& iedName, const QString& ldInst);
     static bool datasetMatchesPanel(const QString& dsName, ReportPanelType type);
     static bool reportMatchesPanel(const ReportEntry& rpt, ReportPanelType type);
     static QString ldName(const QString& iedName, const QString& ldInst);

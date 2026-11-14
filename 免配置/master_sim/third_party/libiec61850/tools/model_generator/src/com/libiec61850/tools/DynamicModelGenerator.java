@@ -330,7 +330,7 @@ public class DynamicModelGenerator {
         output.print(rcb.getName() +  index + " ");
         
         if (rcb.getRptID() != null)
-            output.print(rcb.getRptID() + " ");
+            output.print(SclTypoFix.fixLdZeroLetterO(rcb.getRptID()) + " ");
         else
             output.print("- ");
         
