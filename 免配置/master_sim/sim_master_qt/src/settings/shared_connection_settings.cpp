@@ -9,10 +9,13 @@ SharedConnectionSettings::SharedConnectionSettings(QObject* parent)
     QSettings settings(QStringLiteral("master_sim"), QStringLiteral("sim_master_qt"));
     m_linkWatchSec = settings.value(QStringLiteral("linkWatchSec"), kDefaultLinkWatchSec).toInt();
     m_stationGiSec = settings.value(QStringLiteral("stationGiSec"), kDefaultStationGiSec).toInt();
+    m_commStatePollSec = settings.value(QStringLiteral("commStatePollSec"), kDefaultCommStatePollSec).toInt();
     if (m_linkWatchSec < 30)
         m_linkWatchSec = kDefaultLinkWatchSec;
     if (m_stationGiSec < 60)
         m_stationGiSec = kDefaultStationGiSec;
+    if (m_commStatePollSec != 0 && m_commStatePollSec < 15)
+        m_commStatePollSec = kDefaultCommStatePollSec;
 }
 
 void SharedConnectionSettings::persistInt(const char* key, int value)
@@ -63,5 +66,15 @@ void SharedConnectionSettings::setStationGiSec(int sec)
         return;
     m_stationGiSec = v;
     persistInt("stationGiSec", v);
+    emit settingsChanged();
+}
+
+void SharedConnectionSettings::setCommStatePollSec(int sec)
+{
+    int v = sec <= 0 ? 0 : qBound(15, sec, 3600);
+    if (v == m_commStatePollSec)
+        return;
+    m_commStatePollSec = v;
+    persistInt("commStatePollSec", v);
     emit settingsChanged();
 }

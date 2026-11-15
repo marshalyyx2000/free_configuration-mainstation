@@ -125,18 +125,38 @@ static void emit_ok(const char* cmd) {
     emit_ok_ref(cmd, NULL);
 }
 
-static void emit_rcb_enabled(const char* handlerRef, const char* rcbGetRef, int already)
+static void emit_rcb_enabled(const char* handlerRef, const char* rcbGetRef, int already, int verified,
+    const char* dsRef)
 {
     stdout_lock();
     printf("{\"evt\":\"rcb_enabled\",\"handlerRef\":");
     json_escape_print(stdout, handlerRef ? handlerRef : "");
     printf(",\"rcbGetRef\":");
     json_escape_print(stdout, rcbGetRef ? rcbGetRef : "");
+    if (dsRef && dsRef[0]) {
+        printf(",\"dsRef\":");
+        json_escape_print(stdout, dsRef);
+    }
     if (already)
         printf(",\"already\":true");
+    if (!verified)
+        printf(",\"verified\":false");
     printf("}\n");
     fflush(stdout);
     stdout_unlock();
+}
+
+static bool verify_rcb_rpt_ena_on_server(const char* rcbGetRef)
+{
+    if (!g_con || !rcbGetRef || rcbGetRef[0] == 0)
+        return false;
+    IedClientError err = IED_ERROR_OK;
+    ClientReportControlBlock rcb = IedConnection_getRCBValues(g_con, &err, rcbGetRef, NULL);
+    if (err != IED_ERROR_OK || !rcb)
+        return false;
+    bool ena = ClientReportControlBlock_getRptEna(rcb);
+    ClientReportControlBlock_destroy(rcb);
+    return ena;
 }
 
 static const char* json_str(const char* line, const char* key, char* buf, size_t bufsz) {
@@ -433,7 +453,7 @@ static MmsValue* read_dataset_fast(const char* ref, const char* line, MmsError* 
     return values;
 }
 
-static void emit_dataset_values(const char* ref, MmsValue* values) {
+static void emit_dataset_values(const char* ref, MmsValue* values, const char* source) {
     int n = 0;
     int asArray = 0;
     if (values && (MmsValue_getType(values) == MMS_ARRAY || MmsValue_getType(values) == MMS_STRUCTURE)) {
@@ -445,6 +465,10 @@ static void emit_dataset_values(const char* ref, MmsValue* values) {
     stdout_lock();
     printf("{\"evt\":\"dataset\",\"ref\":");
     json_escape_print(stdout, ref);
+    if (source && source[0]) {
+        printf(",\"source\":");
+        json_escape_print(stdout, source);
+    }
     printf(",\"rows\":[");
     for (int i = 0; i < n; i++) {
         if (i) {
@@ -1019,7 +1043,7 @@ static void cmd_read_dataset(const char* line) {
         emit_after_mms_error(mmsErr);
         return;
     }
-    emit_dataset_values(ref, values);
+    emit_dataset_values(ref, values, NULL);
     MmsValue_delete(values);
 }
 
@@ -1048,7 +1072,10 @@ static void cmd_enable_rcb(const char* line) {
 
     ActiveRcb* existing = find_rcb_by_handler(handlerRef);
     if (existing) {
-        emit_rcb_enabled(handlerRef, existing->rcbGetRef, 1);
+        const int verified = verify_rcb_rpt_ena_on_server(existing->rcbGetRef);
+        emit_rcb_enabled(handlerRef, existing->rcbGetRef, 1, verified, existing->dsRef);
+        if (!verified)
+            emit_error("RptEna verify failed (stale local slot)");
         return;
     }
     ActiveRcb* slot = alloc_rcb_slot();
@@ -1137,7 +1164,19 @@ static void cmd_enable_rcb(const char* line) {
         return;
     }
 
-    emit_rcb_enabled(handlerRef, rcbGetRef, 0);
+    const int verified = verify_rcb_rpt_ena_on_server(rcbGetRef);
+    if (!verified) {
+        free_rcb_slot(slot);
+        emit_error("RptEna verify failed after enable");
+        return;
+    }
+
+    emit_rcb_enabled(handlerRef, rcbGetRef, 0, 1, dsRef);
+    if (slot->clientDataSet) {
+        MmsValue* seed = ClientDataSet_getValues(slot->clientDataSet);
+        if (seed)
+            emit_dataset_values(dsRef, seed, "subscribe_snapshot");
+    }
 }
 
 static void cmd_disable_rcb(const char* line) {

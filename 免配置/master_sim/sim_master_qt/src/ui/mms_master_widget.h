@@ -48,6 +48,7 @@ private slots:
     void onSettingsChanged();
     void onWatchTimeout();
     void onPeriodicGiTimeout();
+    void onCommStatePollTimeout();
 
 private:
     struct IedPageSet {
@@ -74,6 +75,8 @@ private:
     void finishSubscribeQueue();
     void cancelSubscribeQueue();
     void applyCommStateEvent(const QJsonObject& evt);
+    void unsubscribeRcbsForIed(const QString& iedName);
+    static bool commStateMapsEqual(const QHash<QString, bool>& a, const QHash<QString, bool>& b);
     static QString iedNameFromLd(const QString& ld);
     bool shouldSkipOffline(const QString& iedName) const;
     void dispatchReportToPanels(const QString& iedName, const QJsonObject& evt);
@@ -86,6 +89,23 @@ private:
     void reconnectAndRecover();
     void onConnectedAutoRecover();
     void applyWatchTimers(bool startIfConnected);
+    void maybeEnrichIedDoi(const QString& iedName);
+    void beginSmcdDoiIndex(const QString& path);
+    void applyDoiEnrichFromCache(const QString& iedName);
+    void finalizeDoiEnrich(const QString& iedName, const QVector<IedMemberDescPatch>& patches, bool quiet);
+    void pumpDoiWarmQueue();
+    void scheduleDoiEnrichAsync(const QString& iedName, bool quiet);
+    void recordSubscribeFailure(const QString& iedName, const QString& handlerRef, const QString& getRef,
+        const QString& msg);
+    void appendMmsLogChunked(const QString& title, const QStringList& lines, int chunk = 15);
+    void logSubscribeFailuresByReason(const QString& msg);
+
+    struct SubFailEntry {
+        QString iedName;
+        QString handlerRef;
+        QString getRef;
+        QString msg;
+    };
 
     SharedConnectionSettings* m_settings = nullptr;
     ScdModelLoader m_model;
@@ -109,8 +129,10 @@ private:
     quint64 m_smcdLoadGen = 0;
     QTimer m_watchTimer;
     QTimer m_giTimer;
+    QTimer m_commStateTimer;
     QSpinBox* m_linkWatchSpin = nullptr;
     QSpinBox* m_stationGiSpin = nullptr;
+    QSpinBox* m_commStatePollSpin = nullptr;
     bool m_userDisconnect = false;
     bool m_recoverRunning = false;
     bool m_linkLostHandled = false;
@@ -127,7 +149,21 @@ private:
     QTimer m_subWaitTimer;
     QProgressDialog* m_subProg = nullptr;
     QHash<QString, int> m_subFailByIed;
+    QVector<SubFailEntry> m_subFailEntries;
     QStringList m_subSkipIeds;
+    QSet<QString> m_enrichedDoiIeds;
+    QSet<QString> m_enrichingDoiIeds;
+    /** 站级模型代际；变更时丢弃进行中的点描述补全（不把装置误标为已补全）。 */
+    quint64 m_smcdModelGen = 0;
+    QHash<QString, qint64> m_smcdIedOffsets;
+    QHash<QString, QVector<IedMemberDescPatch>> m_doiPatchCache;
+    quint64 m_smcdIndexGen = 0;
+    QString m_doiWarmPath;
+    quint64 m_doiWarmModelGen = 0;
+    QStringList m_doiWarmQueue;
+    bool m_doiWarmActive = false;
+    int m_doiEnrichInFlight = 0;
+    static constexpr int kMaxDoiEnrichParallel = 3;
 
     static bool isBenignSubscribeError(const QString& msg);
 };

@@ -46,10 +46,13 @@ ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWi
     m_upper = new QTableWidget(split);
     m_upper->setColumnCount(7);
     m_upper->setHorizontalHeaderLabels(
-        { tr("数据集描述"), tr("条目"), tr("数据集"), tr("RCB"), tr("RptID"), tr("ConfRev"), tr("订阅") });
+        { tr("数据集描述"), tr("条目"), tr("数据集"), tr("RCB"), tr("RptID"), tr("ConfRev"), tr("主站会话") });
     m_upper->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_upper->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_upper->horizontalHeader()->setStretchLastSection(true);
+    if (m_upper->horizontalHeaderItem(6))
+        m_upper->horizontalHeaderItem(6)->setToolTip(
+            tr("本主站 MMS 会话是否已在子站 RCB 上 RptEna；装置侧订阅见 FZ「订阅状况」"));
 
     auto* lowerWrap = new QWidget(split);
     auto* lowerLayout = new QVBoxLayout(lowerWrap);
@@ -144,6 +147,9 @@ void ReportCtrlPanel::setSubscribedHandlers(const QSet<QString>& handlers,
         if (m_subscribed.contains(href)) {
             status = tr("已订阅");
             color = QColor(QStringLiteral("#080"));
+        } else if (m_subscribeFail.value(href) == QStringLiteral("RPTENA_VERIFY_FAILED")) {
+            status = tr("未生效");
+            color = QColor(QStringLiteral("#c60"));
         } else if (m_subscribeFail.contains(href)) {
             status = tr("订阅失败");
             color = QColor(QStringLiteral("#c00"));
@@ -205,6 +211,9 @@ void ReportCtrlPanel::rebuildUpper()
         if (m_subscribed.contains(row.handlerRef)) {
             subItem->setText(tr("已订阅"));
             subItem->setForeground(QBrush(QColor(QStringLiteral("#080"))));
+        } else if (m_subscribeFail.value(row.handlerRef) == QStringLiteral("RPTENA_VERIFY_FAILED")) {
+            subItem->setText(tr("未生效"));
+            subItem->setForeground(QBrush(QColor(QStringLiteral("#c60"))));
         } else if (m_subscribeFail.contains(row.handlerRef)) {
             subItem->setText(tr("订阅失败"));
             subItem->setForeground(QBrush(QColor(QStringLiteral("#c00"))));
@@ -396,6 +405,8 @@ void ReportCtrlPanel::onSubscribeCurrent()
     const RowInfo row = currentRow();
     if (row.handlerRef.isEmpty() || !m_mms)
         return;
+    emit logLine(tr("订阅请求 handler=%1 getRef=%2 dsRef=%3")
+                       .arg(row.handlerRef, row.getRef, row.dsRef));
     m_mms->enableRcb(QJsonObject{
         { QStringLiteral("handlerRef"), row.handlerRef },
         { QStringLiteral("rcbGetRef"), row.getRef },
@@ -593,9 +604,24 @@ void ReportCtrlPanel::fillLowerFromJson(const QJsonObject& evt)
         const QJsonObject m = members[i].toObject();
         const QString name = m.value(QStringLiteral("name")).toString();
         const QString val = jsonValueText(m.value(QStringLiteral("value")));
-        if (!m_lower->item(i, 0) || m_lower->item(i, 0)->text().isEmpty()) {
-            const QString desc = name.section(QLatin1Char('.'), -1).section(QLatin1Char('['), 0, 0);
-            m_lower->setItem(i, 0, new QTableWidgetItem(desc.isEmpty() ? name : desc));
+        QString modelDesc;
+        const RowInfo row = currentRow();
+        if (m_model) {
+            const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, row.dsName, row.ldInst);
+            if (ds && i < ds->members.size())
+                modelDesc = ds->members.at(i).desc;
+        }
+        QTableWidgetItem* descItem = m_lower->item(i, 0);
+        const QString fallback = name.section(QLatin1Char('.'), -1).section(QLatin1Char('['), 0, 0);
+        const QString fallbackDesc = fallback.isEmpty() ? name : fallback;
+        const bool modelLooksHuman =
+            !modelDesc.isEmpty() && modelDesc != fallbackDesc && !modelDesc.contains(QLatin1Char('$'));
+        if (!descItem) {
+            m_lower->setItem(i, 0, new QTableWidgetItem(modelLooksHuman ? modelDesc : fallbackDesc));
+        } else if (modelLooksHuman) {
+            descItem->setText(modelDesc);
+        } else if (descItem->text().isEmpty()) {
+            descItem->setText(fallbackDesc);
         }
         if (!m_lower->item(i, 1) || m_lower->item(i, 1)->text().isEmpty())
             m_lower->setItem(i, 1, new QTableWidgetItem(name));
@@ -621,7 +647,10 @@ void ReportCtrlPanel::handleMmsEvent(const QJsonObject& evt)
     }
     if (type == QStringLiteral("dataset")) {
         const QString ref = evt.value(QStringLiteral("ref")).toString();
+        const QString source = evt.value(QStringLiteral("source")).toString();
         m_dsCache.insert(ref, evt);
+        if (source == QStringLiteral("subscribe_snapshot"))
+            emit logLine(tr("订阅时读子站数据集快照 %1（非装置直读；可与「召唤数据集」对照 FZ）").arg(ref));
         updateEntryCountForRef(ref, evt.value(QStringLiteral("rows")).toArray().size());
         if (m_bulkActive) {
             if (m_bulkAwaitingResponse && ref == m_pendingDsReq)

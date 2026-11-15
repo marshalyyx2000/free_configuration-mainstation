@@ -5,6 +5,8 @@
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
+#include <QElapsedTimer>
+#include <QXmlStreamReader>
 #include <algorithm>
 
 static QString localTag(const QString& tag)
@@ -78,6 +80,53 @@ static void collectDoiDesc(const QDomElement& lnEl, const QString& ldInst, QHash
             continue;
         out.insert(doiLookupKey(ldInst, prefix, lnClass, lnInst, doName), desc);
     }
+}
+
+static QString fcdaDoiKey(const QDomElement& fcda)
+{
+    const QString ldInst = fcda.attribute(QStringLiteral("ldInst"), QStringLiteral("LD0"));
+    const QString prefix = fcda.attribute(QStringLiteral("prefix"));
+    const QString lnClass = fcda.attribute(QStringLiteral("lnClass"));
+    const QString lnInst = fcda.attribute(QStringLiteral("lnInst"));
+    const QString doName = fcda.attribute(QStringLiteral("doName"));
+    return doiLookupKey(ldInst, prefix, lnClass, lnInst, doName);
+}
+
+static QString memberDescFromDoiMap(const QHash<QString, QString>& doiDesc, const DataSetMember& member)
+{
+    QString desc = doiDesc.value(member.doiKey);
+    if (desc.isEmpty() && !member.doiKey.isEmpty()) {
+        const QString doName = member.doiKey.section(QLatin1Char('|'), -1);
+        for (auto it = doiDesc.constBegin(); it != doiDesc.constEnd(); ++it) {
+            if (it.key().endsWith(QLatin1Char('|') + doName)) {
+                desc = it.value();
+                break;
+            }
+        }
+    }
+    return desc;
+}
+
+static bool buildPatchesFromDoiMap(const IedModel& model, const QHash<QString, QString>& doiDesc,
+    QVector<IedMemberDescPatch>* out)
+{
+    if (!out)
+        return false;
+    out->clear();
+    for (const DataSetEntry& ds : model.datasets) {
+        IedMemberDescPatch patch;
+        patch.dsName = ds.name;
+        patch.ldInst = ds.ldInst;
+        patch.memberDescs.reserve(ds.members.size());
+        for (const DataSetMember& m : ds.members) {
+            QString desc = memberDescFromDoiMap(doiDesc, m);
+            if (desc.isEmpty())
+                desc = m.desc;
+            patch.memberDescs.append(desc);
+        }
+        out->append(patch);
+    }
+    return true;
 }
 
 static QString fcdaDescFromMap(const QHash<QString, QString>& doiDesc, const QDomElement& fcda)
@@ -192,6 +241,7 @@ QVector<IedModel> ScdModelLoader::parseModelsFromSmcd(const QString& path, bool 
                     for (int k = 0; k < fcdas.count(); ++k) {
                         const QDomElement fcdaEl = fcdas.at(k).toElement();
                         DataSetMember member;
+                        member.doiKey = fcdaDoiKey(fcdaEl);
                         member.address = fcdaMmsAddress(name, fcdaEl);
                         member.desc = fcdaDescFromMap(doiDesc, fcdaEl);
                         if (member.desc.isEmpty())
@@ -227,6 +277,345 @@ bool ScdModelLoader::loadSmcd(const QString& path, bool uiFast)
         return false;
     adoptParsedModels(std::move(parsed));
     return true;
+}
+
+static QDomElement findIedElement(const QDomElement& root, const QString& iedName)
+{
+    const QDomNodeList ieds = root.elementsByTagName(QStringLiteral("IED"));
+    for (int i = 0; i < ieds.count(); ++i) {
+        const QDomElement iedEl = ieds.at(i).toElement();
+        if (iedEl.attribute(QStringLiteral("name")) == iedName)
+            return iedEl;
+    }
+    return {};
+}
+
+static QDomElement findDataSetInIed(const QDomElement& iedEl, const QString& dsName, const QString& ldInst)
+{
+    const QDomNodeList ldevices = iedEl.elementsByTagName(QStringLiteral("LDevice"));
+    for (int d = 0; d < ldevices.count(); ++d) {
+        const QDomElement ldEl = ldevices.at(d).toElement();
+        const QString inst = ldEl.attribute(QStringLiteral("inst"), QStringLiteral("LD0"));
+        QString ldKey = inst;
+        if (!iedEl.attribute(QStringLiteral("name")).isEmpty() && !inst.startsWith(iedEl.attribute(QStringLiteral("name"))))
+            ldKey = inst;
+        if (ldKey != ldInst && inst != ldInst)
+            continue;
+        const QDomNodeList ln0s = ldEl.elementsByTagName(QStringLiteral("LN0"));
+        for (int j = 0; j < ln0s.count(); ++j) {
+            const QDomElement ln0 = ln0s.at(j).toElement();
+            for (QDomNode child = ln0.firstChild(); !child.isNull(); child = child.nextSibling()) {
+                if (!child.isElement())
+                    continue;
+                const QDomElement el = child.toElement();
+                if (localTag(el.tagName()) == QStringLiteral("DataSet") && el.attribute(QStringLiteral("name")) == dsName)
+                    return el;
+            }
+        }
+    }
+    return {};
+}
+
+static QString iedNameFromTagBytes(const QByteArray& window, int iedTagIdx)
+{
+    const int namePos = window.indexOf("name=\"", iedTagIdx);
+    if (namePos < 0 || namePos > iedTagIdx + 600)
+        return {};
+    const int valStart = namePos + 6;
+    const int valEnd = window.indexOf('"', valStart);
+    if (valEnd <= valStart)
+        return {};
+    return QString::fromUtf8(window.mid(valStart, valEnd - valStart));
+}
+
+QHash<QString, qint64> ScdModelLoader::smcdIedOffsets(const QString& path)
+{
+    QHash<QString, qint64> out;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return out;
+    const QByteArray needle = "<IED ";
+    QByteArray carry;
+    qint64 basePos = 0;
+    while (true) {
+        const QByteArray chunk = file.read(4 * 1024 * 1024);
+        if (chunk.isEmpty() && carry.isEmpty())
+            break;
+        const QByteArray window = carry + chunk;
+        int idx = 0;
+        while ((idx = window.indexOf(needle, idx)) >= 0) {
+            const QString name = iedNameFromTagBytes(window, idx);
+            if (!name.isEmpty() && name != QStringLiteral("SubStation")) {
+                const qint64 byteOff = basePos - carry.size() + idx;
+                out.insert(name, byteOff);
+            }
+            idx += needle.size();
+        }
+        carry = window.right(qMin(window.size(), needle.size() + 600));
+        basePos += chunk.size();
+        if (chunk.size() < 4 * 1024 * 1024)
+            break;
+    }
+    return out;
+}
+
+bool ScdModelLoader::streamIedDoiDescMap(const QString& path, qint64 iedOffset, const QString& iedName,
+    QHash<QString, QString>* out)
+{
+    if (!out)
+        return false;
+    out->clear();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    if (iedOffset >= 0) {
+        if (!file.seek(iedOffset))
+            return false;
+        const qint64 at = file.pos();
+        const QByteArray head = file.read(8);
+        file.seek(at);
+        if (!head.startsWith('<')) {
+            qint64 back = qMin(iedOffset, qint64(32));
+            file.seek(iedOffset - back);
+            const QByteArray scan = file.read(back + 64);
+            const int rel = scan.lastIndexOf("<IED ");
+            if (rel < 0)
+                return false;
+            if (!file.seek(iedOffset - back + rel))
+                return false;
+        }
+    }
+
+    QXmlStreamReader xml(&file);
+    bool inIed = false;
+    int iedDepth = 0;
+    QString ldInst = QStringLiteral("LD0");
+    QString lnClass;
+    QString prefix;
+    QString lnInst;
+    int lnDepth = 0;
+
+    QString curDoName;
+    QString curDoDesc;
+    bool inDoi = false;
+    bool inDu = false;
+    QString duText;
+
+    while (!xml.atEnd()) {
+        xml.readNext();
+        if (xml.isStartElement()) {
+            const QString tag = xml.name().toString();
+            if (tag == QLatin1String("IED")) {
+                if (!inIed) {
+                    if (xml.attributes().value(QLatin1String("name")).toString() != iedName)
+                        return false;
+                    inIed = true;
+                    iedDepth = 1;
+                } else {
+                    ++iedDepth;
+                }
+            } else if (inIed) {
+                if (tag == QLatin1String("LDevice")) {
+                    ldInst = xml.attributes().value(QLatin1String("inst")).toString();
+                    if (ldInst.isEmpty())
+                        ldInst = QStringLiteral("LD0");
+                } else if (tag == QLatin1String("LN0") || tag == QLatin1String("LN")) {
+                    ++lnDepth;
+                    if (tag == QLatin1String("LN0")) {
+                        lnClass = xml.attributes().value(QLatin1String("lnClass")).toString();
+                        if (lnClass.isEmpty())
+                            lnClass = QStringLiteral("LLN0");
+                    } else {
+                        lnClass = xml.attributes().value(QLatin1String("lnClass")).toString();
+                    }
+                    prefix = xml.attributes().value(QLatin1String("prefix")).toString();
+                    lnInst = xml.attributes().value(QLatin1String("inst")).toString();
+                } else if (tag == QLatin1String("DOI") && lnDepth > 0) {
+                    inDoi = true;
+                    curDoName = xml.attributes().value(QLatin1String("name")).toString();
+                    curDoDesc = xml.attributes().value(QLatin1String("desc")).toString();
+                    inDu = false;
+                    duText.clear();
+                } else if (inDoi && tag == QLatin1String("DAI")
+                    && xml.attributes().value(QLatin1String("name")) == QLatin1String("dU")) {
+                    inDu = true;
+                    duText.clear();
+                }
+            }
+        } else if (xml.isEndElement()) {
+            const QString tag = xml.name().toString();
+            if (tag == QLatin1String("IED") && inIed) {
+                if (--iedDepth == 0)
+                    return true;
+            }
+            if (!inIed)
+                continue;
+            if (tag == QLatin1String("LN0") || tag == QLatin1String("LN"))
+                --lnDepth;
+            if (tag == QLatin1String("DAI") && inDu)
+                inDu = false;
+            if (tag == QLatin1String("DOI") && inDoi) {
+                QString desc = curDoDesc;
+                if (desc.isEmpty())
+                    desc = duText;
+                if (!desc.isEmpty() && !curDoName.isEmpty())
+                    out->insert(doiLookupKey(ldInst, prefix, lnClass, lnInst, curDoName), desc);
+                inDoi = false;
+                curDoName.clear();
+            }
+        } else if (xml.isCharacters() && inDu && !xml.isWhitespace()) {
+            const QString t = xml.text().toString().trimmed();
+            if (!t.isEmpty())
+                duText = t;
+        }
+    }
+    return inIed;
+}
+
+bool ScdModelLoader::buildIedDoiDescPatchesAtOffset(const QString& path, qint64 iedOffset, const QString& iedName,
+    const IedModel& model, QVector<IedMemberDescPatch>* out)
+{
+    QHash<QString, QString> doiDesc;
+    if (!streamIedDoiDescMap(path, iedOffset, iedName, &doiDesc))
+        return false;
+    return buildPatchesFromDoiMap(model, doiDesc, out);
+}
+
+bool ScdModelLoader::buildIedDoiDescPatches(const QString& path, const QString& iedName, const IedModel& model,
+    QVector<IedMemberDescPatch>* out)
+{
+    const QHash<QString, qint64> offs = smcdIedOffsets(path);
+    const qint64 iedOff = offs.value(iedName, -1);
+    if (iedOff >= 0)
+        return buildIedDoiDescPatchesAtOffset(path, iedOff, iedName, model, out);
+
+    if (!out)
+        return false;
+    out->clear();
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QDomDocument doc;
+    if (!doc.setContent(&file))
+        return false;
+    const QDomElement iedEl = findIedElement(doc.documentElement(), iedName);
+    if (iedEl.isNull())
+        return false;
+
+    QHash<QString, QString> doiDesc;
+    const QDomNodeList ldevices = iedEl.elementsByTagName(QStringLiteral("LDevice"));
+    for (int d = 0; d < ldevices.count(); ++d) {
+        const QDomElement ldEl = ldevices.at(d).toElement();
+        const QString ldInst = ldEl.attribute(QStringLiteral("inst"), QStringLiteral("LD0"));
+        for (QDomNode ch = ldEl.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
+            if (!ch.isElement())
+                continue;
+            collectDoiDesc(ch.toElement(), ldInst, doiDesc);
+        }
+    }
+    return buildPatchesFromDoiMap(model, doiDesc, out);
+}
+
+bool ScdModelLoader::applyIedDoiDescPatches(const QString& iedName, const QVector<IedMemberDescPatch>& patches)
+{
+    const int idx = m_modelByIed.value(iedName, -1);
+    if (idx < 0 || idx >= m_models.size())
+        return false;
+    IedModel& model = m_models[idx];
+    bool changed = false;
+    for (const IedMemberDescPatch& patch : patches) {
+        for (DataSetEntry& ds : model.datasets) {
+            if (ds.name != patch.dsName || ds.ldInst != patch.ldInst)
+                continue;
+            const int n = qMin(patch.memberDescs.size(), ds.members.size());
+            for (int k = 0; k < n; ++k) {
+                const QString& desc = patch.memberDescs.at(k);
+                if (!desc.isEmpty() && desc != ds.members[k].desc) {
+                    ds.members[k].desc = desc;
+                    changed = true;
+                }
+            }
+        }
+    }
+    return changed;
+}
+
+bool ScdModelLoader::selfTestDoiEnrich(const QString& smcdPath, int maxSingleIedMs, int maxIndexMs)
+{
+    if (!QFileInfo::exists(smcdPath))
+        return true;
+    QElapsedTimer t;
+    t.start();
+    const QHash<QString, qint64> offs = smcdIedOffsets(smcdPath);
+    if (offs.isEmpty())
+        return false;
+    if (t.elapsed() > maxIndexMs)
+        return false;
+
+    const auto assertIedTag = [&](const QString& iedName) {
+        const qint64 off = offs.value(iedName, -1);
+        if (off < 0)
+            return false;
+        QFile f(smcdPath);
+        if (!f.open(QIODevice::ReadOnly) || !f.seek(off))
+            return false;
+        return f.read(5).startsWith("<IED ");
+    };
+    if (!assertIedTag(QStringLiteral("C_B5012X")) || !assertIedTag(QStringLiteral("C_B5013X")))
+        return false;
+
+    ScdModelLoader loader;
+    QVector<IedModel> parsed = parseModelsFromSmcd(smcdPath, true);
+    if (parsed.isEmpty())
+        return false;
+    loader.adoptParsedModels(std::move(parsed));
+
+    t.restart();
+    for (const QString& iedName :
+        { QStringLiteral("C_B5013X"), QStringLiteral("C_B5012X") }) {
+        const IedModel* im = loader.modelFor(iedName);
+        const qint64 off = offs.value(iedName, -1);
+        if (!im || off < 0)
+            return false;
+        QVector<IedMemberDescPatch> patches;
+        if (!buildIedDoiDescPatchesAtOffset(smcdPath, off, iedName, *im, &patches) || patches.isEmpty())
+            return false;
+        if (!loader.applyIedDoiDescPatches(iedName, patches))
+            return false;
+        if (t.elapsed() > maxSingleIedMs * 2)
+            return false;
+    }
+
+    const IedModel* b5013 = loader.modelFor(QStringLiteral("C_B5013X"));
+    const DataSetEntry* warn =
+        findDataset(b5013, QStringLiteral("dsWarning"), QStringLiteral("LD0"));
+    if (!warn || warn->members.isEmpty() || warn->members.at(0).desc != QStringLiteral("对时信号状态"))
+        return false;
+
+    const IedModel* b5012 = loader.modelFor(QStringLiteral("C_B5012X"));
+    const DataSetEntry* din1 =
+        findDataset(b5012, QStringLiteral("dsDin1"), QStringLiteral("CTRL"));
+    if (!din1)
+        din1 = findDataset(b5012, QStringLiteral("dsDin1"), QStringLiteral("LD0"));
+    if (!din1 || din1->members.isEmpty() || din1->members.at(0).desc != QStringLiteral("GO手合信号"))
+        return false;
+
+    for (const DataSetMember& m : din1->members) {
+        if (m.desc == QStringLiteral("Ind1") || m.desc == QStringLiteral("Ind2"))
+            return false;
+    }
+    return true;
+}
+
+bool ScdModelLoader::enrichIedDoiDescFromSmcd(const QString& path, const QString& iedName)
+{
+    const IedModel* model = modelFor(iedName);
+    if (!model)
+        return false;
+    QVector<IedMemberDescPatch> patches;
+    if (!buildIedDoiDescPatches(path, iedName, *model, &patches))
+        return false;
+    return applyIedDoiDescPatches(iedName, patches);
 }
 
 void ScdModelLoader::adoptParsedModels(QVector<IedModel> models)

@@ -132,6 +132,26 @@ static bool runVerifySelfTest()
         evt.insert(QStringLiteral("items"), QJsonArray());
         ingestMmsReportEvent(cleared, leftover, last, evt);
     }
+
+    if (QFileInfo::exists(smcd)) {
+        ScdModelLoader enrichLoader;
+        enrichLoader.loadIedList(AppPaths::iedListPath());
+        QVector<IedModel> parsed = ScdModelLoader::parseModelsFromSmcd(smcd, true);
+        if (!parsed.isEmpty()) {
+            enrichLoader.adoptParsedModels(std::move(parsed));
+            QString probeIed;
+            for (const IedDeviceEntry& d : enrichLoader.devices()) {
+                if (enrichLoader.modelFor(d.iedName)) {
+                    probeIed = d.iedName;
+                    break;
+                }
+            }
+            if (!probeIed.isEmpty())
+                enrichLoader.enrichIedDoiDescFromSmcd(smcd, probeIed);
+        }
+        if (!ScdModelLoader::selfTestDoiEnrich(smcd))
+            return false;
+    }
     return true;
 }
 
@@ -211,6 +231,13 @@ int main(int argc, char* argv[])
         if (arg == QStringLiteral("--verify")) {
             QCoreApplication core(argc, argv);
             return runVerifySelfTest() ? 0 : 1;
+        }
+        if (arg == QStringLiteral("--verify-doi")) {
+            QCoreApplication core(argc, argv);
+            const QString smcd = AppPaths::defaultSmcdPath();
+            if (!QFileInfo::exists(smcd))
+                return 1;
+            return ScdModelLoader::selfTestDoiEnrich(smcd, 8000, 20000) ? 0 : 1;
         }
         if (arg == QStringLiteral("--verify-gui")) {
             QApplication app(argc, argv);
