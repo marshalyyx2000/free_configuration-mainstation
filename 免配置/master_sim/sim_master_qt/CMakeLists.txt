@@ -2,7 +2,9 @@ cmake_minimum_required(VERSION 3.21)
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" APP_VERSION_RAW)
 string(STRIP "${APP_VERSION_RAW}" APP_VERSION_DISPLAY)
-if(NOT DEFINED APP_VERSION OR APP_VERSION STREQUAL "")
+if(DEFINED APP_VERSION AND NOT APP_VERSION STREQUAL "")
+  set(APP_VERSION_DISPLAY "${APP_VERSION}")
+else()
   set(APP_VERSION "${APP_VERSION_DISPLAY}")
 endif()
 
@@ -46,6 +48,11 @@ set(SOURCES
     src/settings/shared_connection_settings.cpp
     src/scd/scd_model.cpp
     src/mms/mms_client_bridge.cpp
+    src/mms/comm_state_support.cpp
+    src/cli/cli_console.cpp
+    src/cli/headless_main.cpp
+    src/cli/mms_session_server.cpp
+    src/cli/mms_session_client.cpp
     src/event/event_store.cpp
     src/event/report_event_logic.cpp
     src/event/event_format.cpp

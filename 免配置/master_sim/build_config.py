@@ -68,16 +68,22 @@ def parse_connected_aps(scd_path: Path) -> list[ConnectedDevice]:
 
 
 def _connected_ap_rank(ip: str) -> int:
-    """数值越大越优先写入 ch_para（生产站 A 网 172.16 > B 网 172.17 > 仿真 10.100.100）。"""
+    """数值越大越优先写入 ch_para。
+
+    生产站 A 网 172.16 > B 网 172.17 > 实验室 SCDPro A 网 10.100.100 > 其它 10.x。
+    26579 双网时 11.100.100 是 B 网，不能压过 10.100.100。
+    """
+    if ip.startswith("172.16."):
+        return 4
+    if ip.startswith("172.17."):
+        return 3
     if ip.startswith("10.100.100."):
+        return 2
+    if ip.startswith("11.100.100."):
         return 0
     if ip.startswith("10."):
         return 1
-    if ip.startswith("172.17."):
-        return 2
-    if ip.startswith("172.16."):
-        return 3
-    return 2
+    return 1
 
 
 def _dedupe_by_ied(devices: list[ConnectedDevice]) -> list[ConnectedDevice]:
@@ -85,7 +91,7 @@ def _dedupe_by_ied(devices: list[ConnectedDevice]) -> list[ConnectedDevice]:
 
     子站的 ch_para 只能填一个 IP，重复条目会在 IEDList 和 dsCommState 里
     各出现两次（同名 IED 被当成两台，路由侧反复重连 B 网）。这里每个
-    ied_name 只保留一个，双网时优先 172.16 A 网，不用 10.100.100 仿真网段。
+    ied_name 只保留一个：生产站优先 172.16 A 网；实验室 26579 优先 10.100.100（SCDPro），不用 11.100.100 B 网。
     """
     picked: dict[str, ConnectedDevice] = {}
     for dev in devices:
@@ -235,7 +241,11 @@ def inject_substation(scd_path: Path, dest_smcd: Path, devices: list[ConnectedDe
         raise RuntimeError("SCD 中未找到 <IED>，无法插入 SubStation")
     pos = marker.start()
     new_text = text[:pos] + insert + text[pos:]
-    dest_smcd.write_text(_sanitize_scl_for_genconfig(new_text), encoding="utf-8")
+    text = _sanitize_scl_for_genconfig(new_text)
+    if any(d.ip.startswith("10.100.100.") for d in devices):
+        # 26579 NETB 11.100.100 与 NETA 同装置；SCDPro 只绑 10.100.100。
+        text = text.replace("11.100.100.", "10.100.100.")
+    dest_smcd.write_text(text, encoding="utf-8")
 
 
 def build_station_zip(smcd_path: Path, zip_path: Path) -> None:

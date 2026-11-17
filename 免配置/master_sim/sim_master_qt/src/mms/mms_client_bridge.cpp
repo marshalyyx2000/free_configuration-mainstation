@@ -1,10 +1,12 @@
 #include "mms/mms_client_bridge.h"
+#include "mms/comm_state_support.h"
 
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QTimer>
 
 #ifdef Q_OS_WIN
 #ifndef WIN32_LEAN_AND_MEAN
@@ -16,6 +18,12 @@
 MmsClientBridge::MmsClientBridge(QObject* parent)
     : QObject(parent)
 {
+    if (!qEnvironmentVariable("SIM_MASTER_TEST_LOG").isEmpty()
+        || qEnvironmentVariable("SIMMASTER_SKIP_AUTO_COMM_STATE") == QLatin1String("1"))
+        m_autoReadCommState = false;
+    const QString prefer = qEnvironmentVariable("SIMMASTER_PREFER_SMCD_FCDA");
+    if (prefer == QLatin1String("1") || prefer.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
+        m_preferSmcdFcda = true;
     const QDir appDir(QCoreApplication::applicationDirPath());
     m_cliPath = appDir.absoluteFilePath(QStringLiteral("mms_master_cli.exe"));
     if (!QFileInfo::exists(m_cliPath)) {
@@ -122,6 +130,7 @@ void MmsClientBridge::connectHost(const QString& host, int port)
         { QStringLiteral("cmd"), QStringLiteral("connect") },
         { QStringLiteral("host"), host },
         { QStringLiteral("port"), port },
+        { QStringLiteral("timeoutMs"), 120000 },
     });
     flushPending();
 }
@@ -176,7 +185,16 @@ void MmsClientBridge::triggerGi(const QString& handlerRef)
 
 void MmsClientBridge::readCommState()
 {
-    sendCommand(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("read_comm_state") } });
+    readCommState(m_preferSmcdFcda);
+}
+
+void MmsClientBridge::readCommState(bool preferSmcdFcda)
+{
+    if (m_commStateBusy)
+        return;
+    m_commStateBusy = true;
+    sendCommand(CommStateSupport::buildReadCommStateCommand(
+        CommStateSupport::kDefaultReadTimeoutMs, false, preferSmcdFcda));
 }
 
 void MmsClientBridge::listFiles(const QString& path, const QString& requestId)
@@ -190,6 +208,8 @@ void MmsClientBridge::listFiles(const QString& path, const QString& requestId)
 
 void MmsClientBridge::ping()
 {
+    if (m_commStateBusy)
+        return;
     sendCommand(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("ping") } });
 }
 
@@ -230,18 +250,29 @@ void MmsClientBridge::handleLine(const QByteArray& line)
     }
     if (evt == QStringLiteral("connected"))
         m_connected = true;
-    else if (evt == QStringLiteral("disconnected"))
+    else if (evt == QStringLiteral("disconnected")) {
         m_connected = false;
+        m_commStateBusy = false;
+    } else if (evt == QStringLiteral("comm_state"))
+        m_commStateBusy = false;
     else if (evt == QStringLiteral("error")) {
         const QString msg = obj.value(QStringLiteral("msg")).toString();
         if (msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")
-            || msg == QStringLiteral("not connected")) {
+            || msg == QStringLiteral("not connected") || msg == QStringLiteral("CONNECTION_REJECTED")) {
             m_connected = false;
+            m_commStateBusy = false;
         }
     }
     emit eventReceived(obj);
-    if (evt == QStringLiteral("connected"))
-        readCommState();
+    if (evt == QStringLiteral("connected")) {
+        if (m_autoReadCommState) {
+            /* 大站读 dsCommState 较重，延后首读并避免与 ping 并发。 */
+            QTimer::singleShot(CommStateSupport::kPostConnectDelayMs, this, [this]() {
+                if (m_connected)
+                    readCommState(m_preferSmcdFcda);
+            });
+        }
+    }
 }
 
 void MmsClientBridge::onProcessFinished(int code, QProcess::ExitStatus status)
@@ -249,6 +280,7 @@ void MmsClientBridge::onProcessFinished(int code, QProcess::ExitStatus status)
     Q_UNUSED(status);
     m_connected = false;
     m_cliReady = false;
+    m_commStateBusy = false;
     emit logMessage(tr("CLI 已退出，code=%1").arg(code));
     emit eventReceived(QJsonObject{
         { QStringLiteral("evt"), QStringLiteral("disconnected") },

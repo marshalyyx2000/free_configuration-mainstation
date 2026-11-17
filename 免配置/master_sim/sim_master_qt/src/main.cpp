@@ -223,9 +223,13 @@ static int runGenerateConfig(int argc, char* argv[])
 #include <stdexcept>
 
 #include "ui/lab_worker.h"
+#include "cli/headless_main.h"
 
 int main(int argc, char* argv[])
 {
+    if (argc >= 2 && isHeadlessSubcommand(QString::fromLocal8Bit(argv[1])))
+        return runHeadlessCli(argc, argv);
+
     for (int i = 1; i < argc; ++i) {
         const QString arg = QString::fromLocal8Bit(argv[i]);
         if (arg == QStringLiteral("--verify")) {

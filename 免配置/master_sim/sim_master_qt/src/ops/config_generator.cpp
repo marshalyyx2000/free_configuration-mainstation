@@ -40,15 +40,19 @@ QHash<QString, QString> deviceDefaults()
 
 int connectedApRank(const QString& ip)
 {
+    /* 生产 172.16 A > 172.17 B > 实验室 SCDPro 10.100.100 A > 其它。
+     * 26579 的 11.100.100 是 B 网，不能压过 10.100.100。 */
+    if (ip.startsWith(QStringLiteral("172.16.")))
+        return 4;
+    if (ip.startsWith(QStringLiteral("172.17.")))
+        return 3;
     if (ip.startsWith(QStringLiteral("10.100.100.")))
+        return 2;
+    if (ip.startsWith(QStringLiteral("11.100.100.")))
         return 0;
     if (ip.startsWith(QStringLiteral("10.")))
         return 1;
-    if (ip.startsWith(QStringLiteral("172.17.")))
-        return 2;
-    if (ip.startsWith(QStringLiteral("172.16.")))
-        return 3;
-    return 2;
+    return 1;
 }
 
 QVector<ConnectedDeviceEntry> dedupeDevices(QVector<ConnectedDeviceEntry> devices)
@@ -241,6 +245,14 @@ QByteArray clampRptEnabledMax(QByteArray data)
     return data;
 }
 
+QByteArray remapLabBNetToScdPro(QByteArray data)
+{
+    /* 26579 NETA=10.100.100 / NETB=11.100.100。SCDPro 只绑 10.100.100。
+     * 装置侧若按 ConnectedAP 后写覆盖 IEDList，会把 ch_para 改回 11.x。 */
+    data.replace("11.100.100.", "10.100.100.");
+    return data;
+}
+
 QByteArray sanitizeSclForGenconfig(QByteArray data)
 {
     data.replace("intgPd=\"\"", "intgPd=\"0\"");
@@ -324,7 +336,17 @@ void injectSubstation(const QString& scdPath, const QString& destSmcd, const QVe
         throw std::runtime_error("SCD 中未找到 <IED>，无法插入 SubStation");
     data.insert(pos, substationIedXml(devices, lln0LnType).toUtf8());
 
-    writeBinaryFileReplace(destSmcd, sanitizeSclForGenconfig(data));
+    QByteArray out = sanitizeSclForGenconfig(data);
+    bool labScdPro = false;
+    for (const ConnectedDeviceEntry& d : devices) {
+        if (d.ip.startsWith(QLatin1String("10.100.100."))) {
+            labScdPro = true;
+            break;
+        }
+    }
+    if (labScdPro)
+        out = remapLabBNetToScdPro(out);
+    writeBinaryFileReplace(destSmcd, out);
 }
 
 } // namespace

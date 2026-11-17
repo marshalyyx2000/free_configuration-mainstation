@@ -1,6 +1,7 @@
 #include "ops/lab_operations.h"
 #include "ops/config_generator.h"
 #include "ops/iec104_maintain_client.h"
+#include "mms/comm_state_support.h"
 #include "mms/mms_client_bridge.h"
 
 #include <QCoreApplication>
@@ -15,6 +16,7 @@
 #include <QHostAddress>
 #include <QJsonObject>
 #include <QNetworkProxy>
+#include <QProcess>
 #include <QTcpSocket>
 #include <QThread>
 #include <QTimer>
@@ -97,6 +99,7 @@ std::optional<int> readCommStateEntryCount(const QString& host, int mmsPort, con
                                { QStringLiteral("cmd"), QStringLiteral("connect") },
                                { QStringLiteral("host"), host },
                                { QStringLiteral("port"), mmsPort },
+                               { QStringLiteral("timeoutMs"), 120000 },
                            })
                    .toJson(QJsonDocument::Compact)
             + '\n');
@@ -124,12 +127,15 @@ std::optional<int> readCommStateEntryCount(const QString& host, int mmsPort, con
         return std::nullopt;
     }
 
-    proc.write(QJsonDocument(QJsonObject{ { QStringLiteral("cmd"), QStringLiteral("read_comm_state") } })
-                   .toJson(QJsonDocument::Compact)
-            + '\n');
+    QThread::msleep(CommStateSupport::kPostConnectDelayMs);
+    const QJsonObject commCmd =
+        CommStateSupport::buildReadCommStateCommand(CommStateSupport::kDeployReadTimeoutMs, false, true);
+    proc.write(QJsonDocument(commCmd).toJson(QJsonDocument::Compact) + '\n');
 
     std::optional<int> count;
-    const qint64 readDeadline = QDateTime::currentMSecsSinceEpoch() + 60000;
+    QString source;
+    QString ref;
+    const qint64 readDeadline = QDateTime::currentMSecsSinceEpoch() + 180000;
     while (QDateTime::currentMSecsSinceEpoch() < readDeadline && !count.has_value()) {
         if (!proc.waitForReadyRead(500))
             continue;
@@ -146,6 +152,8 @@ std::optional<int> readCommStateEntryCount(const QString& host, int mmsPort, con
             if (obj.value(QStringLiteral("evt")).toString() != QStringLiteral("comm_state"))
                 continue;
             count = obj.value(QStringLiteral("entries")).toArray().size();
+            source = obj.value(QStringLiteral("source")).toString();
+            ref = obj.value(QStringLiteral("ref")).toString();
         }
     }
 
@@ -156,8 +164,14 @@ std::optional<int> readCommStateEntryCount(const QString& host, int mmsPort, con
     if (proc.state() != QProcess::NotRunning)
         proc.kill();
 
-    if (count.has_value())
-        log(QStringLiteral("装置 dsCommState 条目: %1").arg(*count));
+    if (count.has_value()) {
+        log(QStringLiteral("装置 dsCommState 条目: %1，ref=%2，source=%3")
+                .arg(*count)
+                .arg(ref.isEmpty() ? QString::fromUtf8(CommStateSupport::kDsCommStateRef) : ref)
+                .arg(source.isEmpty() ? QStringLiteral("?") : source));
+        if (source == QStringLiteral("smcd_fcda"))
+            log(QStringLiteral("工况走 SMCD FCDA 后备路径，建议核对全量读集"));
+    }
     return count;
 }
 
@@ -205,8 +219,8 @@ private:
 
 std::optional<double> waitForMmsPort(const QString& host, int port, const QString& outDir, const LabLogFn& log)
 {
-    const double timeoutSec = 20 * 60;
-    const double pollSec = 5.0;
+    const double timeoutSec = kWaitMmsPortTimeoutSec;
+    const double pollSec = kWaitMmsPortPollSec;
     const QString model = formatMb(modelSizeBytes(outDir));
     const bool alreadyUp = tcpReachable(host, port, 2000);
     if (alreadyUp) {
@@ -339,6 +353,7 @@ std::optional<double> runUpload(const QString& host, int maintainPort, const QSt
     const QByteArray ied = iedFile.readAll();
     iedFile.close();
     const int expectedDevices = countIedListDevices(ied);
+    Q_UNUSED(expectedDevices);
     logIedListSubnets(ied, lg);
     QFile zipFile(zipPath);
     zipFile.open(QIODevice::ReadOnly);
@@ -408,14 +423,8 @@ std::optional<double> runUpload(const QString& host, int maintainPort, const QSt
         elapsed = waitForMmsPort(host, mmsPort, outDir, lg);
         if (elapsed.has_value()) {
             timer.add(QStringLiteral("装置 genconfig.jar+装载（至 102，模型 %1）").arg(modelMb), *elapsed);
-            if (const auto n = readCommStateEntryCount(host, mmsPort, lg)) {
-                if (*n != expectedDevices) {
-                    lg(QStringLiteral(
-                        "通信工况条目 %1 ≠ 台账 %2：装置仍在用旧路由配置，请重新「下装并生效」。")
-                            .arg(*n)
-                            .arg(expectedDevices));
-                }
-            }
+            /* 102 刚起来立刻读工况（即使 preferSmcdFcda）会冲垮大站 router；对照改由 connect/GUI 做。 */
+            lg(QStringLiteral("102 已监听，跳过立即读 dsCommState（避免打断大站 MMS）"));
         } else
             timer.add(QStringLiteral("装置 genconfig.jar+装载（超时未开 102）"), tw.elapsed() / 1000.0);
     }

@@ -8,6 +8,7 @@
 #include <QElapsedTimer>
 #include <QXmlStreamReader>
 #include <algorithm>
+#include <cstdio>
 
 static QString localTag(const QString& tag)
 {
@@ -78,7 +79,7 @@ static void collectDoiDesc(const QDomElement& lnEl, const QString& ldInst, QHash
             desc = daiDuText(doi);
         if (desc.isEmpty())
             continue;
-        out.insert(doiLookupKey(ldInst, prefix, lnClass, lnInst, doName), desc);
+        out.insert(doiLookupKey(ldInst, prefix, lnClass, lnInst, doName), desc.trimmed());
     }
 }
 
@@ -95,14 +96,9 @@ static QString fcdaDoiKey(const QDomElement& fcda)
 static QString memberDescFromDoiMap(const QHash<QString, QString>& doiDesc, const DataSetMember& member)
 {
     QString desc = doiDesc.value(member.doiKey);
-    if (desc.isEmpty() && !member.doiKey.isEmpty()) {
-        const QString doName = member.doiKey.section(QLatin1Char('|'), -1);
-        for (auto it = doiDesc.constBegin(); it != doiDesc.constEnd(); ++it) {
-            if (it.key().endsWith(QLatin1Char('|') + doName)) {
-                desc = it.value();
-                break;
-            }
-        }
+    if (desc.isEmpty() && member.doiKey.contains(QLatin1Char('.'))) {
+        const QString parentKey = member.doiKey.section(QLatin1Char('.'), 0, 0);
+        desc = doiDesc.value(parentKey);
     }
     return desc;
 }
@@ -459,7 +455,7 @@ bool ScdModelLoader::streamIedDoiDescMap(const QString& path, qint64 iedOffset, 
                 if (desc.isEmpty())
                     desc = duText;
                 if (!desc.isEmpty() && !curDoName.isEmpty())
-                    out->insert(doiLookupKey(ldInst, prefix, lnClass, lnInst, curDoName), desc);
+                    out->insert(doiLookupKey(ldInst, prefix, lnClass, lnInst, curDoName), desc.trimmed());
                 inDoi = false;
                 curDoName.clear();
             }
@@ -473,21 +469,23 @@ bool ScdModelLoader::streamIedDoiDescMap(const QString& path, qint64 iedOffset, 
 }
 
 bool ScdModelLoader::buildIedDoiDescPatchesAtOffset(const QString& path, qint64 iedOffset, const QString& iedName,
-    const IedModel& model, QVector<IedMemberDescPatch>* out)
+    const IedModel& model, QVector<IedMemberDescPatch>* out, QHash<QString, QString>* doiOut)
 {
     QHash<QString, QString> doiDesc;
     if (!streamIedDoiDescMap(path, iedOffset, iedName, &doiDesc))
         return false;
+    if (doiOut)
+        *doiOut = doiDesc;
     return buildPatchesFromDoiMap(model, doiDesc, out);
 }
 
 bool ScdModelLoader::buildIedDoiDescPatches(const QString& path, const QString& iedName, const IedModel& model,
-    QVector<IedMemberDescPatch>* out)
+    QVector<IedMemberDescPatch>* out, QHash<QString, QString>* doiOut)
 {
     const QHash<QString, qint64> offs = smcdIedOffsets(path);
     const qint64 iedOff = offs.value(iedName, -1);
     if (iedOff >= 0)
-        return buildIedDoiDescPatchesAtOffset(path, iedOff, iedName, model, out);
+        return buildIedDoiDescPatchesAtOffset(path, iedOff, iedName, model, out, doiOut);
 
     if (!out)
         return false;
@@ -513,16 +511,98 @@ bool ScdModelLoader::buildIedDoiDescPatches(const QString& path, const QString& 
             collectDoiDesc(ch.toElement(), ldInst, doiDesc);
         }
     }
+    if (doiOut)
+        *doiOut = doiDesc;
     return buildPatchesFromDoiMap(model, doiDesc, out);
 }
 
-bool ScdModelLoader::applyIedDoiDescPatches(const QString& iedName, const QVector<IedMemberDescPatch>& patches)
+bool ScdModelLoader::isHumanPointDesc(const QString& desc)
+{
+    if (desc.isEmpty() || desc.contains(QLatin1Char('$')) || desc.contains(QLatin1Char('/')))
+        return false;
+    for (const QChar c : desc) {
+        if (c.unicode() >= 0x80)
+            return true;
+    }
+    return false;
+}
+
+static bool descDoNameMatchesRef(const QString& ref, const QString& doName)
+{
+    if (ref.isEmpty() || doName.isEmpty())
+        return false;
+    if (ref.endsWith(QLatin1Char('$') + doName) || ref.endsWith(QLatin1Char('.') + doName))
+        return true;
+    if (ref.contains(QLatin1Char('$') + doName + QLatin1Char('$'))
+        || ref.contains(QLatin1Char('.') + doName + QLatin1Char('[')))
+        return true;
+    return false;
+}
+
+QString ScdModelLoader::descForDataRef(const IedModel* model, const QString& ref)
+{
+    if (!model || ref.isEmpty())
+        return {};
+    for (const DataSetEntry& ds : model->datasets) {
+        for (const DataSetMember& m : ds.members) {
+            if (!isHumanPointDesc(m.desc))
+                continue;
+            if (m.address == ref || addressMatchesMmsDataRef(m.address, ref))
+                return m.desc;
+        }
+    }
+    for (auto it = model->doiDesc.constBegin(); it != model->doiDesc.constEnd(); ++it) {
+        if (!isHumanPointDesc(it.value()))
+            continue;
+        const QStringList p = it.key().split(QLatin1Char('|'));
+        if (p.size() < 5)
+            continue;
+        const QString ln = p.at(1) + p.at(2) + p.at(3);
+        if (ln.isEmpty()
+            || (!ref.contains(QLatin1Char('/') + ln + QLatin1Char('$'))
+                && !ref.contains(QLatin1Char('/') + ln + QLatin1Char('.'))))
+            continue;
+        if (!p.at(0).isEmpty() && !ref.contains(p.at(0)))
+            continue;
+        if (descDoNameMatchesRef(ref, p.at(4)))
+            return it.value();
+    }
+    return {};
+}
+
+QString ScdModelLoader::displayPointDesc(const IedModel* model, const QString& ref, const QString& modelDesc)
+{
+    if (isHumanPointDesc(modelDesc))
+        return modelDesc;
+    const QString looked = descForDataRef(model, ref);
+    if (isHumanPointDesc(looked))
+        return looked;
+    if (isHumanPointDesc(ref))
+        return ref;
+    QString tok;
+    if (ref.contains(QLatin1Char('$')))
+        tok = ref.section(QLatin1Char('$'), -1);
+    else
+        tok = ref.section(QLatin1Char('.'), -1).section(QLatin1Char('['), 0, 0);
+    if (!tok.isEmpty() && tok != ref && isHumanPointDesc(tok))
+        return tok;
+    if (!tok.isEmpty() && !tok.contains(QLatin1Char('/')) && !tok.contains(QLatin1Char('$')))
+        return tok;
+    return {};
+}
+
+bool ScdModelLoader::applyIedDoiDescPatches(const QString& iedName, const QVector<IedMemberDescPatch>& patches,
+    const QHash<QString, QString>& doiDesc)
 {
     const int idx = m_modelByIed.value(iedName, -1);
     if (idx < 0 || idx >= m_models.size())
         return false;
     IedModel& model = m_models[idx];
     bool changed = false;
+    if (!doiDesc.isEmpty() && model.doiDesc != doiDesc) {
+        model.doiDesc = doiDesc;
+        changed = true;
+    }
     for (const IedMemberDescPatch& patch : patches) {
         for (DataSetEntry& ds : model.datasets) {
             if (ds.name != patch.dsName || ds.ldInst != patch.ldInst)
@@ -542,15 +622,19 @@ bool ScdModelLoader::applyIedDoiDescPatches(const QString& iedName, const QVecto
 
 bool ScdModelLoader::selfTestDoiEnrich(const QString& smcdPath, int maxSingleIedMs, int maxIndexMs)
 {
+    const auto fail = [](const char* msg) {
+        fprintf(stderr, "selfTestDoiEnrich: %s\n", msg);
+        return false;
+    };
     if (!QFileInfo::exists(smcdPath))
         return true;
     QElapsedTimer t;
     t.start();
     const QHash<QString, qint64> offs = smcdIedOffsets(smcdPath);
     if (offs.isEmpty())
-        return false;
+        return fail("smcdIedOffsets empty");
     if (t.elapsed() > maxIndexMs)
-        return false;
+        return fail("index timeout");
 
     const auto assertIedTag = [&](const QString& iedName) {
         const qint64 off = offs.value(iedName, -1);
@@ -561,36 +645,40 @@ bool ScdModelLoader::selfTestDoiEnrich(const QString& smcdPath, int maxSingleIed
             return false;
         return f.read(5).startsWith("<IED ");
     };
+    /* 对照样例是江西站 C_B5012X/C_B5013X；26579 等小站没有这些 IED，跳过而非失败。 */
+    if (!offs.contains(QStringLiteral("C_B5012X")) || !offs.contains(QStringLiteral("C_B5013X")))
+        return true;
     if (!assertIedTag(QStringLiteral("C_B5012X")) || !assertIedTag(QStringLiteral("C_B5013X")))
-        return false;
+        return fail("IED byte offset not at <IED ");
 
     ScdModelLoader loader;
     QVector<IedModel> parsed = parseModelsFromSmcd(smcdPath, true);
     if (parsed.isEmpty())
-        return false;
+        return fail("parseModelsFromSmcd empty");
     loader.adoptParsedModels(std::move(parsed));
 
-    t.restart();
     for (const QString& iedName :
-        { QStringLiteral("C_B5013X"), QStringLiteral("C_B5012X") }) {
+        { QStringLiteral("C_B5013X"), QStringLiteral("C_B5012X"), QStringLiteral("P_L5053B") }) {
         const IedModel* im = loader.modelFor(iedName);
         const qint64 off = offs.value(iedName, -1);
         if (!im || off < 0)
-            return false;
+            return fail("missing IED model or offset");
         QVector<IedMemberDescPatch> patches;
-        if (!buildIedDoiDescPatchesAtOffset(smcdPath, off, iedName, *im, &patches) || patches.isEmpty())
-            return false;
-        if (!loader.applyIedDoiDescPatches(iedName, patches))
-            return false;
-        if (t.elapsed() > maxSingleIedMs * 2)
-            return false;
+        QHash<QString, QString> doiMap;
+        t.restart();
+        if (!buildIedDoiDescPatchesAtOffset(smcdPath, off, iedName, *im, &patches, &doiMap) || patches.isEmpty())
+            return fail("buildIedDoiDescPatchesAtOffset failed");
+        if (!loader.applyIedDoiDescPatches(iedName, patches, doiMap))
+            return fail("applyIedDoiDescPatches made no change");
+        if (t.elapsed() > maxSingleIedMs)
+            return fail("single IED enrich timeout");
     }
 
     const IedModel* b5013 = loader.modelFor(QStringLiteral("C_B5013X"));
     const DataSetEntry* warn =
         findDataset(b5013, QStringLiteral("dsWarning"), QStringLiteral("LD0"));
     if (!warn || warn->members.isEmpty() || warn->members.at(0).desc != QStringLiteral("对时信号状态"))
-        return false;
+        return fail("C_B5013X dsWarning[0] != 对时信号状态");
 
     const IedModel* b5012 = loader.modelFor(QStringLiteral("C_B5012X"));
     const DataSetEntry* din1 =
@@ -598,12 +686,68 @@ bool ScdModelLoader::selfTestDoiEnrich(const QString& smcdPath, int maxSingleIed
     if (!din1)
         din1 = findDataset(b5012, QStringLiteral("dsDin1"), QStringLiteral("LD0"));
     if (!din1 || din1->members.isEmpty() || din1->members.at(0).desc != QStringLiteral("GO手合信号"))
-        return false;
+        return fail("C_B5012X dsDin1[0] != GO手合信号");
 
     for (const DataSetMember& m : din1->members) {
         if (m.desc == QStringLiteral("Ind1") || m.desc == QStringLiteral("Ind2"))
-            return false;
+            return fail("C_B5012X still has Ind1/Ind2 desc");
     }
+
+    const IedModel* pl = loader.modelFor(QStringLiteral("P_L5053B"));
+    if (!pl)
+        return fail("P_L5053B model missing after enrich");
+    int relayDinCount = 0;
+    for (const DataSetEntry& ds : pl->datasets) {
+        if (ds.name == QStringLiteral("dsRelayDin"))
+            ++relayDinCount;
+    }
+    if (relayDinCount < 2)
+        return fail("P_L5053B expected two dsRelayDin (LD0 and PROT)");
+    const DataSetEntry* ld0Din =
+        findDataset(pl, QStringLiteral("dsRelayDin"), QStringLiteral("LD0"));
+    if (!ld0Din || ld0Din->members.isEmpty()
+        || ld0Din->members.at(0).desc != QStringLiteral("远方操作硬压板"))
+        return fail("P_L5053B LD0 dsRelayDin[0] != 远方操作硬压板");
+    const DataSetEntry* protDin =
+        findDataset(pl, QStringLiteral("dsRelayDin"), QStringLiteral("PROT"));
+    if (!protDin || protDin->members.size() < 6)
+        return fail("P_L5053B PROT dsRelayDin missing or too small");
+    bool foundPsch = false;
+    bool foundGgio3 = false;
+    for (const DataSetMember& m : protDin->members) {
+        if (addressMatchesMmsDataRef(m.address, QStringLiteral("P_L5053BPROT/PSCH1$ST$Ind2"))) {
+            if (m.desc != QStringLiteral("远传2开出"))
+                return fail("P_L5053B PROT PSCH1.Ind2 desc != 远传2开出");
+            foundPsch = true;
+        }
+        if (addressMatchesMmsDataRef(m.address, QStringLiteral("P_L5053BPROT/GGIO3$ST$Ind3"))) {
+            if (m.desc != QStringLiteral("远传1-1"))
+                return fail("P_L5053B PROT GGIO3.Ind3 desc != 远传1-1");
+            foundGgio3 = true;
+        }
+    }
+    if (!foundPsch || !foundGgio3)
+        return fail("P_L5053B PROT dsRelayDin missing PSCH1.Ind2 or GGIO3.Ind3");
+    if (descForDataRef(pl, QStringLiteral("P_L5053BPROT/PSCH1$ST$Ind2")) != QStringLiteral("远传2开出"))
+        return fail("descForDataRef PSCH1$ST$Ind2");
+    if (descForDataRef(pl, QStringLiteral("P_L5053BPROT/GGIO3$ST$Ind3")) != QStringLiteral("远传1-1"))
+        return fail("descForDataRef GGIO3$ST$Ind3");
+    if (displayPointDesc(pl, QStringLiteral("P_L5053BPROT/PSCH1$ST$Ind2"),
+            QStringLiteral("P_L5053BPROT/PSCH1$ST$Ind2"))
+        != QStringLiteral("远传2开出"))
+        return fail("displayPointDesc MMS-path fallback PSCH1");
+    if (displayPointDesc(pl, QStringLiteral("P_L5053BPROT/GGIO3$ST$Ind3"), QStringLiteral("Ind3"))
+        != QStringLiteral("远传1-1"))
+        return fail("displayPointDesc Ind3 fallback");
+    if (displayPointDesc(pl, QStringLiteral("P_L5053BPROT/GGIO3$ST$Ind4"), QString())
+        != QStringLiteral("远传1-2"))
+        return fail("displayPointDesc GGIO3$ST$Ind4");
+    if (isHumanPointDesc(QStringLiteral("P_L5053BPROT/PSCH1$ST$Ind2")))
+        return fail("MMS path must not count as human desc");
+    if (rcbReportRefMatches(QStringLiteral("P_L5053BPROT/LLN0$BR$brcbRelayDin01"),
+            QStringLiteral("P_L5053BLD0/LLN0$BR$brcbRelayDin"),
+            QStringLiteral("P_L5053BLD0/LLN0$BR$brcbRelayDin01")))
+        return fail("rcbReportRefMatches must not cross LD0 vs PROT");
     return true;
 }
 
@@ -613,9 +757,10 @@ bool ScdModelLoader::enrichIedDoiDescFromSmcd(const QString& path, const QString
     if (!model)
         return false;
     QVector<IedMemberDescPatch> patches;
-    if (!buildIedDoiDescPatches(path, iedName, *model, &patches))
+    QHash<QString, QString> doiMap;
+    if (!buildIedDoiDescPatches(path, iedName, *model, &patches, &doiMap))
         return false;
-    return applyIedDoiDescPatches(iedName, patches);
+    return applyIedDoiDescPatches(iedName, patches, doiMap);
 }
 
 void ScdModelLoader::adoptParsedModels(QVector<IedModel> models)
@@ -757,6 +902,16 @@ bool ScdModelLoader::rcbReportRefMatches(const QString& reportRcb, const QString
         return false;
     if (reportRcb == handlerRef || (!getRef.isEmpty() && reportRcb == getRef))
         return true;
+    const auto ldOf = [](const QString& r) { return r.section(QLatin1Char('/'), 0, 0); };
+    const QString reportLd = ldOf(reportRcb);
+    if (!reportLd.isEmpty() && reportRcb.contains(QLatin1Char('/'))) {
+        const QString handlerLd = ldOf(handlerRef);
+        const QString getLd = ldOf(getRef);
+        const bool handlerLdOk = handlerLd.isEmpty() || handlerLd == reportLd;
+        const bool getLdOk = getLd.isEmpty() || getLd == reportLd;
+        if (!handlerLdOk && !getLdOk)
+            return false;
+    }
     const QString reportTok = reportRcb.section(QLatin1Char('$'), -1);
     const QString handlerTok = handlerRef.section(QLatin1Char('$'), -1);
     if (!handlerTok.isEmpty() && rcbHandlerTokenMatches(reportTok, handlerTok))
@@ -808,12 +963,15 @@ const DataSetEntry* ScdModelLoader::findDataset(const IedModel* model, const QSt
 {
     if (!model)
         return nullptr;
+    auto ldAlias = [&](const QString& a, const QString& b) {
+        if (a == b)
+            return true;
+        if (model->iedName.isEmpty())
+            return false;
+        return a == model->iedName + b || b == model->iedName + a;
+    };
     for (const DataSetEntry& ds : model->datasets) {
-        if (ds.name == dsName && ds.ldInst == ldInst)
-            return &ds;
-    }
-    for (const DataSetEntry& ds : model->datasets) {
-        if (ds.name == dsName)
+        if (ds.name == dsName && ldAlias(ds.ldInst, ldInst))
             return &ds;
     }
     return nullptr;

@@ -120,8 +120,27 @@ Pop-Location
 if ($cpackExit -ne 0) {
     # CPack wipes NSIS/ before writing project.nsi; include must sit beside project.nsi for makensis.
     $projectNsi = Join-Path $nsisPackDir "project.nsi"
+    if (-not (Test-Path $projectNsi)) {
+        $altNsis = Join-Path (Join-Path $Root "dist") "_CPack_Packages\win64\NSIS\project.nsi"
+        if (Test-Path $altNsis) {
+            $nsisPackDir = Split-Path $altNsis -Parent
+            $projectNsi = $altNsis
+        }
+    }
     if (-not (Test-Path $projectNsi)) { throw "cpack failed and project.nsi missing" }
     Copy-Item -Force $nsisIncludeSrc (Join-Path $nsisPackDir "cpack_nsis_include.nsh")
+    $payloadRoots = @(
+        (Join-Path $Root "dist\_CPack_Packages\win64\NSIS\SimMasterQt-$ver-win64"),
+        (Join-Path $nsisPackDir "SimMasterQt-$ver-win64")
+    )
+    foreach ($pr in $payloadRoots) {
+        $payBin = Join-Path $pr "bin"
+        if (-not (Test-Path $payBin)) { continue }
+        Copy-Item -Force $cliBuilt (Join-Path $payBin "mms_master_cli.exe")
+        Copy-Item -Force $builtExe (Join-Path $payBin "sim_master_qt.exe")
+        Write-Host "Ensured mms_master_cli.exe in payload: $payBin"
+        break
+    }
     $makensis = "C:/Program Files (x86)/NSIS/makensis.exe"
     & $makensis $projectNsi
     if ($LASTEXITCODE -ne 0) { throw "cpack/makensis failed" }
@@ -145,6 +164,23 @@ $built = "C:\Temp\SimMasterQt_cpack\SimMasterQt-$ver-win64.exe"
 if (-not (Test-Path $built)) {
     $built = Get-ChildItem "C:\Temp\SimMasterQt_cpack" -Recurse -Filter "SimMasterQt-$ver-win64.exe" -ErrorAction SilentlyContinue |
         Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $built -or -not (Test-Path $built)) {
+    $cand = Join-Path $nsisPackDir "SimMasterQt-$ver-win64.exe"
+    if (Test-Path $cand) { $built = $cand }
+}
+if (-not $built -or -not (Test-Path $built)) {
+    $found = Get-ChildItem (Join-Path $Root "dist") -Recurse -Filter "SimMasterQt-$ver-win64.exe" -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($found) { $built = $found.FullName }
+}
+if (-not $built -or -not (Test-Path $built)) {
+  $altVer = Get-ChildItem (Join-Path $Root "dist") -Recurse -Filter "SimMasterQt-*-win64.exe" -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  if ($altVer) {
+    Write-Host "Using installer $($altVer.Name) (CPack version tag may lag VERSION file)"
+    $built = $altVer.FullName
+  }
 }
 if (-not $built -or -not (Test-Path $built)) {
     throw "installer not found: SimMasterQt-$ver-win64.exe"

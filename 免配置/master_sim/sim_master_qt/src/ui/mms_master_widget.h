@@ -5,6 +5,7 @@
 #include "mms/mms_client_bridge.h"
 #include "scd/scd_model.h"
 
+#include <QDateTime>
 #include <QHash>
 #include <QJsonObject>
 #include <QSet>
@@ -75,6 +76,8 @@ private:
     void finishSubscribeQueue();
     void cancelSubscribeQueue();
     void applyCommStateEvent(const QJsonObject& evt);
+    void clearCommStateSnapshot();
+    void requestCommStateThenSubscribe();
     void unsubscribeRcbsForIed(const QString& iedName);
     static bool commStateMapsEqual(const QHash<QString, bool>& a, const QHash<QString, bool>& b);
     static QString iedNameFromLd(const QString& ld);
@@ -92,11 +95,13 @@ private:
     void maybeEnrichIedDoi(const QString& iedName);
     void beginSmcdDoiIndex(const QString& path);
     void applyDoiEnrichFromCache(const QString& iedName);
-    void finalizeDoiEnrich(const QString& iedName, const QVector<IedMemberDescPatch>& patches, bool quiet);
+    void finalizeDoiEnrich(const QString& iedName, const IedDoiEnrichResult& result, bool quiet);
     void pumpDoiWarmQueue();
     void scheduleDoiEnrichAsync(const QString& iedName, bool quiet);
     void recordSubscribeFailure(const QString& iedName, const QString& handlerRef, const QString& getRef,
         const QString& msg);
+    void retractSubscribeFailure(const QString& handlerRef);
+    void pruneSubFailEntriesForSubscribed();
     void appendMmsLogChunked(const QString& title, const QStringList& lines, int chunk = 15);
     void logSubscribeFailuresByReason(const QString& msg);
 
@@ -133,6 +138,7 @@ private:
     QSpinBox* m_linkWatchSpin = nullptr;
     QSpinBox* m_stationGiSpin = nullptr;
     QSpinBox* m_commStatePollSpin = nullptr;
+    QDateTime m_mmsConnectedAt;
     bool m_userDisconnect = false;
     bool m_recoverRunning = false;
     bool m_linkLostHandled = false;
@@ -146,6 +152,7 @@ private:
     int m_subSkip = 0;
     bool m_subGiAfter = false;
     QString m_subWaitingHandler;
+    QSet<QString> m_subLatePending;
     QTimer m_subWaitTimer;
     QProgressDialog* m_subProg = nullptr;
     QHash<QString, int> m_subFailByIed;
@@ -156,7 +163,7 @@ private:
     /** 站级模型代际；变更时丢弃进行中的点描述补全（不把装置误标为已补全）。 */
     quint64 m_smcdModelGen = 0;
     QHash<QString, qint64> m_smcdIedOffsets;
-    QHash<QString, QVector<IedMemberDescPatch>> m_doiPatchCache;
+    QHash<QString, IedDoiEnrichResult> m_doiPatchCache;
     quint64 m_smcdIndexGen = 0;
     QString m_doiWarmPath;
     quint64 m_doiWarmModelGen = 0;

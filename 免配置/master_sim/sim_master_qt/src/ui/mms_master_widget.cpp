@@ -1,5 +1,6 @@
 #include "ui/mms_master_widget.h"
 #include "event/station_event_list_widget.h"
+#include "mms/comm_state_support.h"
 #include "settings/shared_connection_settings.h"
 #include "ui/ied_tree_widget.h"
 #include "ui/report_ctrl_panel.h"
@@ -137,6 +138,8 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
 
     connect(&m_mms, &MmsClientBridge::eventReceived, this, &MmsMasterWidget::onMmsEvent);
     connect(&m_mms, &MmsClientBridge::logMessage, this, [this](const QString& msg) { appendMmsLog(msg); });
+    m_mms.setAutoReadCommState(false);
+    m_mms.setPreferSmcdFcda(true);
     if (m_settings)
         connect(m_settings, &SharedConnectionSettings::settingsChanged, this, &MmsMasterWidget::onSettingsChanged);
 
@@ -151,6 +154,7 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
         if (m_subWaitingHandler.isEmpty() || !m_batchSubscribing)
             return;
         const QString handler = m_subWaitingHandler;
+        m_subLatePending.insert(handler);
         m_subscribeFailures.insert(handler, QStringLiteral("TIMEOUT"));
         if (m_subIndex >= 0 && m_subIndex < m_subQueue.size()) {
             const RcbDescriptor& d = m_subQueue[m_subIndex];
@@ -457,6 +461,7 @@ void MmsMasterWidget::connectSubstation()
 
 void MmsMasterWidget::disconnectSubstation()
 {
+    m_mmsConnectedAt = QDateTime();
     m_userDisconnect = true;
     m_userHasSubscribed = false;
     m_pendingAutoRecover = false;
@@ -464,6 +469,7 @@ void MmsMasterWidget::disconnectSubstation()
     m_watchTimer.stop();
     m_giTimer.stop();
     m_commStateTimer.stop();
+    clearCommStateSnapshot();
     m_mms.disconnectHost();
     m_subscribedHandlers.clear();
     m_subscribeFailures.clear();
@@ -555,18 +561,18 @@ void MmsMasterWidget::onIedSelected(const IedDeviceEntry& dev)
 
 void MmsMasterWidget::applyDoiEnrichFromCache(const QString& iedName)
 {
-    const QVector<IedMemberDescPatch> patches = m_doiPatchCache.value(iedName);
-    if (patches.isEmpty())
+    const IedDoiEnrichResult cached = m_doiPatchCache.value(iedName);
+    if (cached.patches.isEmpty() && cached.doiDesc.isEmpty())
         return;
-    finalizeDoiEnrich(iedName, patches, true);
+    finalizeDoiEnrich(iedName, cached, true);
 }
 
-void MmsMasterWidget::finalizeDoiEnrich(const QString& iedName, const QVector<IedMemberDescPatch>& patches, bool quiet)
+void MmsMasterWidget::finalizeDoiEnrich(const QString& iedName, const IedDoiEnrichResult& result, bool quiet)
 {
-    if (patches.isEmpty())
+    if (result.patches.isEmpty() && result.doiDesc.isEmpty())
         return;
-    m_doiPatchCache.insert(iedName, patches);
-    const bool changed = m_model.applyIedDoiDescPatches(iedName, patches);
+    m_doiPatchCache.insert(iedName, result);
+    const bool changed = m_model.applyIedDoiDescPatches(iedName, result.patches, result.doiDesc);
     if (!quiet && changed)
         appendMmsLog(tr("%1 点描述已补全").arg(iedName));
     m_enrichedDoiIeds.insert(iedName);
@@ -607,10 +613,10 @@ void MmsMasterWidget::scheduleDoiEnrichAsync(const QString& iedName, bool quiet)
 
     const quint64 modelGen = m_smcdModelGen;
     const IedModel modelCopy = *iedModel;
-    auto* watcher = new QFutureWatcher<QVector<IedMemberDescPatch>>(this);
-    connect(watcher, &QFutureWatcher<QVector<IedMemberDescPatch>>::finished, this,
+    auto* watcher = new QFutureWatcher<IedDoiEnrichResult>(this);
+    connect(watcher, &QFutureWatcher<IedDoiEnrichResult>::finished, this,
         [this, watcher, modelGen, iedName, quiet]() {
-            const QVector<IedMemberDescPatch> patches = watcher->result();
+            const IedDoiEnrichResult result = watcher->result();
             watcher->deleteLater();
             m_enrichingDoiIeds.remove(iedName);
             m_doiEnrichInFlight = qMax(0, m_doiEnrichInFlight - 1);
@@ -618,7 +624,7 @@ void MmsMasterWidget::scheduleDoiEnrichAsync(const QString& iedName, bool quiet)
                 m_doiWarmActive = false;
                 return;
             }
-            if (patches.isEmpty()) {
+            if (result.patches.isEmpty()) {
                 if (quiet) {
                     m_doiWarmActive = false;
                     pumpDoiWarmQueue();
@@ -627,14 +633,14 @@ void MmsMasterWidget::scheduleDoiEnrichAsync(const QString& iedName, bool quiet)
                 }
                 return;
             }
-            finalizeDoiEnrich(iedName, patches, quiet);
+            finalizeDoiEnrich(iedName, result, quiet);
             if (quiet)
                 pumpDoiWarmQueue();
         });
     const QString smcdPath = path;
     watcher->setFuture(QtConcurrent::run([smcdPath, off, iedName, modelCopy]() {
-        QVector<IedMemberDescPatch> out;
-        ScdModelLoader::buildIedDoiDescPatchesAtOffset(smcdPath, off, iedName, modelCopy, &out);
+        IedDoiEnrichResult out;
+        ScdModelLoader::buildIedDoiDescPatchesAtOffset(smcdPath, off, iedName, modelCopy, &out.patches, &out.doiDesc);
         return out;
     }));
 }
@@ -793,6 +799,31 @@ void MmsMasterWidget::appendMmsLogChunked(const QString& title, const QStringLis
     }
 }
 
+void MmsMasterWidget::retractSubscribeFailure(const QString& handlerRef)
+{
+    if (handlerRef.isEmpty())
+        return;
+    m_subscribeFailures.remove(handlerRef);
+    for (int i = m_subFailEntries.size() - 1; i >= 0; --i) {
+        if (m_subFailEntries.at(i).handlerRef == handlerRef)
+            m_subFailEntries.removeAt(i);
+    }
+}
+
+void MmsMasterWidget::pruneSubFailEntriesForSubscribed()
+{
+    for (int i = m_subFailEntries.size() - 1; i >= 0; --i) {
+        if (m_subscribedHandlers.contains(m_subFailEntries.at(i).handlerRef))
+            m_subFailEntries.removeAt(i);
+    }
+    for (auto it = m_subscribeFailures.constBegin(); it != m_subscribeFailures.constEnd();) {
+        if (m_subscribedHandlers.contains(it.key()))
+            it = m_subscribeFailures.erase(it);
+        else
+            ++it;
+    }
+}
+
 void MmsMasterWidget::recordSubscribeFailure(const QString& iedName, const QString& handlerRef, const QString& getRef,
     const QString& msg)
 {
@@ -811,7 +842,7 @@ void MmsMasterWidget::logSubscribeFailuresByReason(const QString& msg)
     QStringList lines;
     QSet<QString> seen;
     for (const SubFailEntry& e : m_subFailEntries) {
-        if (e.msg != msg)
+        if (e.msg != msg || m_subscribedHandlers.contains(e.handlerRef))
             continue;
         const QString line =
             QStringLiteral("%1 handler=%2 getRef=%3").arg(e.iedName, e.handlerRef, e.getRef);
@@ -821,7 +852,7 @@ void MmsMasterWidget::logSubscribeFailuresByReason(const QString& msg)
         }
     }
     for (auto it = m_subscribeFailures.constBegin(); it != m_subscribeFailures.constEnd(); ++it) {
-        if (it.value() != msg)
+        if (it.value() != msg || m_subscribedHandlers.contains(it.key()))
             continue;
         const QString line = QStringLiteral("handler=%1").arg(it.key());
         if (!seen.contains(line)) {
@@ -836,11 +867,15 @@ void MmsMasterWidget::logSubscribeFailuresByReason(const QString& msg)
 
 bool MmsMasterWidget::shouldSkipOffline(const QString& iedName) const
 {
-    if (!m_commStateAligned || iedName.isEmpty())
-        return false;
-    if (!m_commState.contains(iedName))
-        return false;
-    return !m_commState.value(iedName);
+    return CommStateSupport::shouldSkipOfflineIed(m_commState, m_commStateAligned, iedName);
+}
+
+void MmsMasterWidget::clearCommStateSnapshot()
+{
+    m_commState.clear();
+    m_commStateAligned = false;
+    if (m_iedTree)
+        m_iedTree->setCommState({});
 }
 
 void MmsMasterWidget::startSubscribeQueue(const QVector<RcbDescriptor>& list, bool showProgress, bool giAfter,
@@ -857,6 +892,7 @@ void MmsMasterWidget::startSubscribeQueue(const QVector<RcbDescriptor>& list, bo
     m_subGiAfter = giAfter;
     m_subFailByIed.clear();
     m_subFailEntries.clear();
+    m_subLatePending.clear();
     m_subSkipIeds.clear();
     m_batchSubscribing = true;
     m_userHasSubscribed = true;
@@ -885,6 +921,8 @@ void MmsMasterWidget::startSubscribeQueue(const QVector<RcbDescriptor>& list, bo
             .arg(list.size())
             .arg(onlineEst)
             .arg(m_commStateAligned ? tr("是") : tr("否（不按分跳过）")));
+    if (commOn == 0 && !m_commState.isEmpty())
+        appendMmsLog(tr("工况合=0（快照不可信或子站未刷新），不按「分」跳过，将尝试 enable 全部 RCB"));
     if (skippedNonProxy > 0)
         appendMmsLog(tr("已跳过非代理 LD（PIGO/RPIT 等 GOOSE）%1 条，不向子站 enable").arg(skippedNonProxy));
     if (showProgress) {
@@ -932,7 +970,7 @@ void MmsMasterWidget::pumpSubscribeNext()
                     .arg(m_subFail)
                     .arg(m_subSkip));
         m_subWaitingHandler = d.handlerRef;
-        m_subWaitTimer.start(12000);
+        m_subWaitTimer.start(45000);
         m_mms.enableRcb(QJsonObject{
             { QStringLiteral("handlerRef"), d.handlerRef },
             { QStringLiteral("rcbGetRef"), d.getRef },
@@ -947,6 +985,7 @@ void MmsMasterWidget::finishSubscribeQueue()
 {
     m_subWaitTimer.stop();
     m_subWaitingHandler.clear();
+    pruneSubFailEntriesForSubscribed();
     const int total = m_subQueue.size();
     const bool giAfter = m_subGiAfter;
     if (m_subProg) {
@@ -969,6 +1008,8 @@ void MmsMasterWidget::finishSubscribeQueue()
         }
         QHash<QString, QStringList> failLinesByIed;
         for (const SubFailEntry& e : m_subFailEntries) {
+            if (m_subscribedHandlers.contains(e.handlerRef))
+                continue;
             const QString line = QStringLiteral("%1 %2").arg(e.handlerRef, e.getRef);
             if (!e.msg.isEmpty())
                 failLinesByIed[e.iedName].append(line + QStringLiteral(" [") + e.msg + QLatin1Char(']'));
@@ -1026,21 +1067,31 @@ void MmsMasterWidget::subscribeAllStation()
         QMessageBox::warning(this, tr("提示"), tr("请先连接 SubStation"));
         return;
     }
-    if (m_commState.isEmpty()) {
-        appendMmsLog(tr("正在读取通信工况，完成后自动全站订阅…"));
-        m_pendingAutoRecover = false;
-        connect(
-            &m_mms, &MmsClientBridge::eventReceived, this,
-            [this](const QJsonObject& evt) {
-                if (evt.value(QStringLiteral("evt")).toString() != QStringLiteral("comm_state"))
-                    return;
-                subscribeAllStationInternal(true);
-            },
-            Qt::SingleShotConnection);
+    /* 先订报告控制块。关联后立刻 getDataSetDirectory 读工况会冲掉 102。 */
+    subscribeAllStationInternal(true);
+}
+
+void MmsMasterWidget::requestCommStateThenSubscribe()
+{
+    constexpr int kPostConnectSettleMs = CommStateSupport::kPostConnectDelayMs;
+    auto doRead = [this]() {
+        if (!m_mms.connected())
+            return;
         m_mms.readCommState();
+    };
+    if (!m_mmsConnectedAt.isValid()) {
+        doRead();
         return;
     }
-    subscribeAllStationInternal(true);
+    const qint64 elapsed = m_mmsConnectedAt.msecsTo(QDateTime::currentDateTime());
+    const int waitMs = kPostConnectSettleMs - int(elapsed);
+    if (waitMs > 0) {
+        appendMmsLog(tr("大站 CID 模型：MMS 关联后约 %1 秒再读工况，避免冲击子站…")
+                         .arg((waitMs + 999) / 1000));
+        QTimer::singleShot(waitMs, this, doRead);
+    } else {
+        doRead();
+    }
 }
 
 void MmsMasterWidget::subscribeAllStationInternal(bool showProgress, bool giAfter)
@@ -1095,6 +1146,7 @@ void MmsMasterWidget::markLinkLost(const QString& reason)
     m_watchTimer.stop();
     m_giTimer.stop();
     m_commStateTimer.stop();
+    clearCommStateSnapshot();
     m_subscribedHandlers.clear();
     m_subscribeFailures.clear();
     updateSubscribedUi();
@@ -1115,8 +1167,7 @@ void MmsMasterWidget::reconnectAndRecover()
     if (!m_userHasSubscribed)
         return;
     if (m_mms.connected()) {
-        m_pendingAutoRecover = true;
-        m_mms.readCommState();
+        onConnectedAutoRecover();
         return;
     }
     appendMmsLog(tr("正在自动重连 SubStation…"));
@@ -1127,11 +1178,6 @@ void MmsMasterWidget::onConnectedAutoRecover()
 {
     if (m_userDisconnect || m_recoverRunning || !m_userHasSubscribed)
         return;
-    if (m_commState.isEmpty()) {
-        m_pendingAutoRecover = true;
-        m_mms.readCommState();
-        return;
-    }
     m_recoverRunning = true;
     m_linkLostHandled = false;
     appendMmsLog(tr("连接已恢复：继续全站订阅与总召唤…"));
@@ -1152,7 +1198,7 @@ void MmsMasterWidget::applyWatchTimers(bool startIfConnected)
     if (startIfConnected && m_mms.connected() && !m_userDisconnect) {
         m_watchTimer.start();
         m_giTimer.start();
-        if (pollSec > 0)
+        if (pollSec > 0 && qEnvironmentVariable("SIM_MASTER_TEST_LOG").isEmpty())
             m_commStateTimer.start();
         else
             m_commStateTimer.stop();
@@ -1297,6 +1343,7 @@ void MmsMasterWidget::applyCommStateEvent(const QJsonObject& evt)
     int named = 0;
     int on = 0;
     int off = 0;
+    int invalid = 0;
     QSet<QString> known;
     QStringList unknown;
     for (const IedDeviceEntry& d : m_model.devices())
@@ -1308,6 +1355,11 @@ void MmsMasterWidget::applyCommStateEvent(const QJsonObject& evt)
             ied = iedNameFromLd(e.value(QStringLiteral("ld")).toString());
         if (ied.isEmpty())
             continue;
+        const bool entryValid = !e.contains(QStringLiteral("valid")) || e.value(QStringLiteral("valid")).toBool();
+        if (!entryValid) {
+            ++invalid;
+            continue;
+        }
         ++named;
         const bool sv = e.value(QStringLiteral("stVal")).toBool();
         st.insert(ied, sv);
@@ -1318,7 +1370,18 @@ void MmsMasterWidget::applyCommStateEvent(const QJsonObject& evt)
         if (!known.isEmpty() && !known.contains(ied) && unknown.size() < 12)
             unknown.append(ied);
     }
-    m_commStateAligned = named == arr.size() && named > 0;
+    m_commStateAligned = named == arr.size() && named > 0 && invalid == 0;
+
+    const QString source = evt.value(QStringLiteral("source")).toString();
+    const QString ref = evt.value(QStringLiteral("ref")).toString();
+    appendMmsLog(tr("工况 ref=%1 source=%2，共 %3 条，在线 %4 / 离线 %5")
+            .arg(ref.isEmpty() ? QString::fromUtf8(CommStateSupport::kDsCommStateRef) : ref)
+            .arg(source.isEmpty() ? QStringLiteral("?") : source)
+            .arg(arr.size())
+            .arg(on)
+            .arg(off));
+    if (source == QStringLiteral("smcd_fcda"))
+        appendMmsLog(tr("后备路径（SMCD FCDA），建议核对全量读集"));
 
     QStringList wentOffline;
     QStringList wentOnline;
@@ -1388,6 +1451,8 @@ void MmsMasterWidget::applyCommStateEvent(const QJsonObject& evt)
     dumpChunked(tr("分（%1）：").arg(offNames.size()), offNames);
     if (!unknown.isEmpty())
         appendMmsLog(tr("工况域名未出现在台账：%1").arg(unknown.join(QStringLiteral(", "))));
+    if (invalid > 0)
+        appendMmsLog(tr("工况读失败 %1 条（不当作「分」，全站订阅不跳过这些装置）").arg(invalid));
     if (!m_commStateAligned)
         appendMmsLog(tr("工况未按域名对齐，全站订阅不按「分」跳过"));
 }
@@ -1404,8 +1469,13 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         const bool wasSub = !handler.isEmpty() && m_subscribedHandlers.contains(handler);
         if (!handler.isEmpty()) {
             if (verified) {
-                m_subscribeFailures.remove(handler);
+                retractSubscribeFailure(handler);
                 m_subscribedHandlers.insert(handler);
+                if (m_subLatePending.remove(handler)) {
+                    if (m_subFail > 0)
+                        --m_subFail;
+                    ++m_subOk;
+                }
             } else {
                 m_subscribedHandlers.remove(handler);
                 m_subscribeFailures.insert(handler, QStringLiteral("RPTENA_VERIFY_FAILED"));
@@ -1501,6 +1571,8 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
     if (type == QStringLiteral("connected")) {
         const QString host = evt.value(QStringLiteral("host")).toString();
         const int port = evt.value(QStringLiteral("port")).toInt();
+        m_mmsConnectedAt = QDateTime::currentDateTime();
+        clearCommStateSnapshot();
         m_linkStatus->setText(tr("已连接 %1:%2").arg(host).arg(port));
         m_linkStatus->setStyleSheet(QStringLiteral("color:#080; font-weight:bold; padding-left:8px;"));
         appendMmsLog(tr("SubStation MMS 已连接 %1:%2").arg(host).arg(port));
@@ -1510,9 +1582,11 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
             for (ReportCtrlPanel* p : it->panels)
                 p->onConnectionReady();
         }
-        m_pendingAutoRecover = !m_userDisconnect && m_userHasSubscribed;
+        m_pendingAutoRecover = false;
         if (!m_userHasSubscribed)
             appendMmsLog(tr("已连接，请点击「全站订阅」后再收变位"));
+        else
+            QTimer::singleShot(0, this, &MmsMasterWidget::onConnectedAutoRecover);
         applyWatchTimers(true);
     }
     if (type == QStringLiteral("disconnected")) {
@@ -1548,6 +1622,8 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
             if (isBenignSubscribeError(msg) || msg == QStringLiteral("rcb already enabled"))
                 return;
         }
+        if (msg == QStringLiteral("OK") || msg.compare(QStringLiteral("ok"), Qt::CaseInsensitive) == 0)
+            return;
         if (msg == QStringLiteral("rcb already enabled"))
             return;
         if (msg == QStringLiteral("too many active rcbs"))
@@ -1568,6 +1644,8 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         }
         appendMmsLog(tr("MMS 错误: %1").arg(msg));
         if (msg == QStringLiteral("CONNECTION_LOST") || msg == QStringLiteral("NOT_CONNECTED")) {
+            appendMmsLog(
+                tr("提示：若子站刚连上就断，多为 102 进程退出；大 SMCD 冷启动约 8–15 分钟，勿在关联后立刻全站订阅。"));
             if (!m_userDisconnect)
                 markLinkLost(msg);
         } else if (!m_mms.connected()) {

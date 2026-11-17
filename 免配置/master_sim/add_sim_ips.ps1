@@ -29,4 +29,4 @@ for ($i = $Start; $i -le $End; $i++) {
     Write-Host "  + $ip"
 }
 
-Write-Host "完成。装置侧请执行: sudo ip route add 10.100.100.0/24 via 192.168.0.27 dev eth0"
+Write-Host "完成。装置侧请执行: sudo ip route add 10.100.100.0/24 via 192.168.0.20 dev eth0"

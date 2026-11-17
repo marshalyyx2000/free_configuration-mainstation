@@ -26,6 +26,9 @@ public slots:
     void disableRcb(const QString& handlerRef, const QString& rcbGetRef = QString());
     void triggerGi(const QString& handlerRef);
     void readCommState();
+    void readCommState(bool preferSmcdFcda);
+    void setAutoReadCommState(bool enabled) { m_autoReadCommState = enabled; }
+    void setPreferSmcdFcda(bool enabled) { m_preferSmcdFcda = enabled; }
     void listFiles(const QString& path, const QString& requestId);
     void ping();
 
@@ -47,7 +50,10 @@ private:
     QString m_cliPath;
     bool m_connected = false;
     bool m_cliReady = false;
+    bool m_commStateBusy = false;
     bool m_signalsHooked = false;
+    bool m_autoReadCommState = true;
+    bool m_preferSmcdFcda = false;
     QByteArray m_readBuffer;
     QVector<QJsonObject> m_pending;
 };

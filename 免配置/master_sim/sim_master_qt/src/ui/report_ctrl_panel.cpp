@@ -181,9 +181,10 @@ void ReportCtrlPanel::rebuildUpper()
     for (const ReportEntry& rpt : m_model->reports) {
         if (!ScdModelLoader::reportMatchesPanel(rpt, m_type))
             continue;
-        if (seenDs.contains(rpt.datSet))
+        const QString dsKey = rpt.ldInst + QLatin1Char('/') + rpt.datSet;
+        if (seenDs.contains(dsKey))
             continue;
-        seenDs.insert(rpt.datSet);
+        seenDs.insert(dsKey);
         RowInfo row;
         row.dsName = rpt.datSet;
         row.dsRef = ScdModelLoader::datasetRef(m_dev.iedName, rpt.datSet, rpt.ldInst);
@@ -202,7 +203,7 @@ void ReportCtrlPanel::rebuildUpper()
         m_upper->insertRow(r);
         m_upper->setItem(r, 0, new QTableWidgetItem(ds && !ds->desc.isEmpty() ? ds->desc : rpt.datSet));
         m_upper->setItem(r, 1, new QTableWidgetItem(memberCount > 0 ? QString::number(memberCount) : QString()));
-        m_upper->setItem(r, 2, new QTableWidgetItem(rpt.datSet));
+        m_upper->setItem(r, 2, new QTableWidgetItem(rpt.ldInst + QLatin1Char('/') + rpt.datSet));
         m_upper->setItem(r, 3, new QTableWidgetItem(rpt.name));
         const QString rptId = (rpt.rptId.isEmpty() || rpt.rptId == QStringLiteral("NULL")) ? QString() : rpt.rptId;
         m_upper->setItem(r, 4, new QTableWidgetItem(rptId));
@@ -239,7 +240,8 @@ void ReportCtrlPanel::populateLowerFromModel(const RowInfo& row)
     m_lower->setRowCount(ds->members.size());
     for (int i = 0; i < ds->members.size(); ++i) {
         const DataSetMember& m = ds->members[i];
-        m_lower->setItem(i, 0, new QTableWidgetItem(m.desc));
+        const QString desc = ScdModelLoader::displayPointDesc(m_model, m.address, m.desc);
+        m_lower->setItem(i, 0, new QTableWidgetItem(desc));
         m_lower->setItem(i, 1, new QTableWidgetItem(m.address));
         m_lower->setItem(i, 2, new QTableWidgetItem(QString()));
         m_lower->setItem(i, 3, new QTableWidgetItem(QString()));
@@ -328,6 +330,7 @@ void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& it
                 if (ScdModelLoader::addressMatchesMmsDataRef(ds->members[i].address, name))
                     return i;
             }
+            return -1;
         }
         if (!name.isEmpty()) {
             for (int i = 0; i < rows.size(); ++i) {
@@ -336,6 +339,8 @@ void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& it
                     return i;
             }
         }
+        if (ds && (idx < 0 || idx >= ds->members.size()))
+            return -1;
         return idx;
     };
     for (const QJsonValue& v : items) {
@@ -397,7 +402,7 @@ void ReportCtrlPanel::onReadCurrentDataset()
     m_pendingDsReq = row.dsRef;
     emit logLine(tr("召唤数据集 %1").arg(row.dsRef));
     emit deviceEvent(StationEventCategory::datasetRead(), row.dsRef, tr("召唤数据集"));
-    m_mms->readDataSet(row.dsRef, row.dsRef);
+    m_mms->readDataSet(row.dsRef, row.dsRef, mmsItemsForRef(row.dsRef));
 }
 
 void ReportCtrlPanel::onSubscribeCurrent()
@@ -537,7 +542,7 @@ void ReportCtrlPanel::sendNextBulkRead()
     const QString ref = m_bulkQueue.takeFirst();
     m_pendingDsReq = ref;
     m_bulkAwaitingResponse = true;
-    m_mms->readDataSet(ref, ref);
+    m_mms->readDataSet(ref, ref, mmsItemsForRef(ref));
 }
 
 void ReportCtrlPanel::scheduleBulkNext(bool stopAfter)
@@ -597,42 +602,83 @@ void ReportCtrlPanel::finishBulkRead()
 void ReportCtrlPanel::fillLowerFromJson(const QJsonObject& evt)
 {
     const QJsonArray members = evt.value(QStringLiteral("rows")).toArray();
-    updateEntryCountForRef(evt.value(QStringLiteral("ref")).toString(), members.size());
-    if (m_lower->rowCount() < members.size())
-        m_lower->setRowCount(members.size());
+    const QString ref = evt.value(QStringLiteral("ref")).toString();
+    const RowInfo row = currentRow();
+    const DataSetEntry* ds = (m_model && !row.dsName.isEmpty())
+        ? ScdModelLoader::findDataset(m_model, row.dsName, row.ldInst)
+        : nullptr;
+    if (!ref.isEmpty())
+        updateEntryCountForRef(ref, ds ? ds->members.size() : members.size());
+
+    if (ds && !ds->members.isEmpty()) {
+        if (m_lower->rowCount() != ds->members.size())
+            m_lower->setRowCount(ds->members.size());
+        for (int i = 0; i < ds->members.size(); ++i) {
+            const DataSetMember& mem = ds->members.at(i);
+            const QString desc = ScdModelLoader::displayPointDesc(m_model, mem.address, mem.desc);
+            if (!m_lower->item(i, 0))
+                m_lower->setItem(i, 0, new QTableWidgetItem(desc));
+            else
+                m_lower->item(i, 0)->setText(desc);
+            if (!m_lower->item(i, 1) || m_lower->item(i, 1)->text().isEmpty())
+                m_lower->setItem(i, 1, new QTableWidgetItem(mem.address));
+            if (!m_lower->item(i, 2))
+                m_lower->setItem(i, 2, new QTableWidgetItem(QString()));
+            if (!m_lower->item(i, 3))
+                m_lower->setItem(i, 3, new QTableWidgetItem(QString()));
+        }
+    }
+
+    auto findRowIndex = [&](const QString& name) -> int {
+        if (name.isEmpty())
+            return -1;
+        for (int r = 0; r < m_lower->rowCount(); ++r) {
+            const QTableWidgetItem* addr = m_lower->item(r, 1);
+            if (addr && (addr->text() == name || ScdModelLoader::addressMatchesMmsDataRef(addr->text(), name)))
+                return r;
+        }
+        if (ds) {
+            for (int i = 0; i < ds->members.size(); ++i) {
+                if (ds->members.at(i).address == name
+                    || ScdModelLoader::addressMatchesMmsDataRef(ds->members.at(i).address, name))
+                    return i;
+            }
+        }
+        return -1;
+    };
+
     for (int i = 0; i < members.size(); ++i) {
         const QJsonObject m = members[i].toObject();
         const QString name = m.value(QStringLiteral("name")).toString();
         const QString val = jsonValueText(m.value(QStringLiteral("value")));
-        QString modelDesc;
-        const RowInfo row = currentRow();
-        if (m_model) {
-            const DataSetEntry* ds = ScdModelLoader::findDataset(m_model, row.dsName, row.ldInst);
-            if (ds && i < ds->members.size())
-                modelDesc = ds->members.at(i).desc;
+        int rowIdx = findRowIndex(name);
+        if (rowIdx < 0) {
+            if (ds)
+                continue;
+            rowIdx = i;
+            if (m_lower->rowCount() <= rowIdx)
+                m_lower->setRowCount(rowIdx + 1);
+            const QString desc = ScdModelLoader::displayPointDesc(m_model, name, QString());
+            m_lower->setItem(rowIdx, 0, new QTableWidgetItem(desc));
+            m_lower->setItem(rowIdx, 1, new QTableWidgetItem(name));
+        } else {
+            const QString existingDesc = m_lower->item(rowIdx, 0) ? m_lower->item(rowIdx, 0)->text() : QString();
+            const QString desc = ScdModelLoader::displayPointDesc(m_model, name, existingDesc);
+            if (!m_lower->item(rowIdx, 0))
+                m_lower->setItem(rowIdx, 0, new QTableWidgetItem(desc));
+            else if (ScdModelLoader::isHumanPointDesc(desc))
+                m_lower->item(rowIdx, 0)->setText(desc);
+            if (!m_lower->item(rowIdx, 1) || m_lower->item(rowIdx, 1)->text().isEmpty())
+                m_lower->setItem(rowIdx, 1, new QTableWidgetItem(name));
         }
-        QTableWidgetItem* descItem = m_lower->item(i, 0);
-        const QString fallback = name.section(QLatin1Char('.'), -1).section(QLatin1Char('['), 0, 0);
-        const QString fallbackDesc = fallback.isEmpty() ? name : fallback;
-        const bool modelLooksHuman =
-            !modelDesc.isEmpty() && modelDesc != fallbackDesc && !modelDesc.contains(QLatin1Char('$'));
-        if (!descItem) {
-            m_lower->setItem(i, 0, new QTableWidgetItem(modelLooksHuman ? modelDesc : fallbackDesc));
-        } else if (modelLooksHuman) {
-            descItem->setText(modelDesc);
-        } else if (descItem->text().isEmpty()) {
-            descItem->setText(fallbackDesc);
-        }
-        if (!m_lower->item(i, 1) || m_lower->item(i, 1)->text().isEmpty())
-            m_lower->setItem(i, 1, new QTableWidgetItem(name));
-        if (m_lower->item(i, 2))
-            m_lower->item(i, 2)->setText(m_lower->item(i, 3) ? m_lower->item(i, 3)->text() : val);
+        if (m_lower->item(rowIdx, 2))
+            m_lower->item(rowIdx, 2)->setText(m_lower->item(rowIdx, 3) ? m_lower->item(rowIdx, 3)->text() : val);
         else
-            m_lower->setItem(i, 2, new QTableWidgetItem(val));
-        if (m_lower->item(i, 3))
-            m_lower->item(i, 3)->setText(val);
+            m_lower->setItem(rowIdx, 2, new QTableWidgetItem(val));
+        if (m_lower->item(rowIdx, 3))
+            m_lower->item(rowIdx, 3)->setText(val);
         else
-            m_lower->setItem(i, 3, new QTableWidgetItem(val));
+            m_lower->setItem(rowIdx, 3, new QTableWidgetItem(val));
     }
 }
 

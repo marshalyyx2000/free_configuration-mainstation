@@ -6,14 +6,13 @@
 
 #include <QString>
 
+#include "ops/lab_constants.h"
+
 class MmsClientBridge;
 
 using LabLogFn = std::function<void(const QString&)>;
 
 namespace LabOps {
-
-inline constexpr const char* GENCONFIG_HINT_TEXT =
-    "约 1 分钟内（加速 genconfig.jar + 装载 supervision.cfg）";
 
 bool tcpReachable(const QString& host, int port, int timeoutMs = 3000);
 qint64 modelSizeBytes(const QString& outDir);

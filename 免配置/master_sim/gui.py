@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""仿真主站图形界面（tkinter）。"""
+"""DEPRECATED: use sim_master_qt. 仿真主站图形界面（tkinter），仅作历史参考。"""
 from __future__ import annotations
 
 import queue

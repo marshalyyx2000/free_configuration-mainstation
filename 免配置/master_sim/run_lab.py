@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""串联：生成配置 -> 2405 下装 -> 可选 MMS 探测。"""
+"""DEPRECATED: use sim_master_qt. 串联：生成配置 -> 2405 下装 -> 可选 MMS 探测。"""
 from __future__ import annotations
 
 import argparse

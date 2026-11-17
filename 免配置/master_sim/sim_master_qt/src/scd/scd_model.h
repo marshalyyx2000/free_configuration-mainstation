@@ -57,6 +57,8 @@ struct IedModel {
     QString desc;
     QVector<DataSetEntry> datasets;
     QVector<ReportEntry> reports;
+    /** DOI 键 ld|prefix|lnClass|lnInst|doName → 中文描述（流式补全后填充）。 */
+    QHash<QString, QString> doiDesc;
 };
 
 /** 单台装置数据集成员描述补丁（后台从 SMCD 解析 DOI/dU 后写回模型）。 */
@@ -64,6 +66,11 @@ struct IedMemberDescPatch {
     QString dsName;
     QString ldInst;
     QVector<QString> memberDescs;
+};
+
+struct IedDoiEnrichResult {
+    QVector<IedMemberDescPatch> patches;
+    QHash<QString, QString> doiDesc;
 };
 
 struct RcbDescriptor {
@@ -122,17 +129,23 @@ public:
     bool enrichIedDoiDescFromSmcd(const QString& path, const QString& iedName);
     /** 从 SMCD 解析单台装置 DOI 描述，不修改已加载模型（可在线程中调用）。 */
     static bool buildIedDoiDescPatches(const QString& path, const QString& iedName, const IedModel& model,
-        QVector<IedMemberDescPatch>* out);
+        QVector<IedMemberDescPatch>* out, QHash<QString, QString>* doiOut = nullptr);
     /** 扫描 SMCD 各 IED 起始字节偏移（无 DOM，大站一次约数秒）。 */
     static QHash<QString, qint64> smcdIedOffsets(const QString& path);
     /** 从偏移处流式读单 IED 的 DOI/dU（可在线程中调用）。 */
     static bool streamIedDoiDescMap(const QString& path, qint64 iedOffset, const QString& iedName,
         QHash<QString, QString>* out);
     static bool buildIedDoiDescPatchesAtOffset(const QString& path, qint64 iedOffset, const QString& iedName,
-        const IedModel& model, QVector<IedMemberDescPatch>* out);
+        const IedModel& model, QVector<IedMemberDescPatch>* out, QHash<QString, QString>* doiOut = nullptr);
+    static bool isHumanPointDesc(const QString& desc);
+    /** 按 MMS/SCD 数据引用从已补全模型取中文描述。 */
+    static QString descForDataRef(const IedModel* model, const QString& ref);
+    /** 表格「描述」列：优先中文 DOI/FCDA，永不回退为 MMS 路径。 */
+    static QString displayPointDesc(const IedModel* model, const QString& ref, const QString& modelDesc = QString());
     /** 自测：流式补全是否产生中文点描述（及可选耗时上限 ms）。 */
     static bool selfTestDoiEnrich(const QString& smcdPath, int maxSingleIedMs = 8000, int maxIndexMs = 20000);
-    bool applyIedDoiDescPatches(const QString& iedName, const QVector<IedMemberDescPatch>& patches);
+    bool applyIedDoiDescPatches(const QString& iedName, const QVector<IedMemberDescPatch>& patches,
+        const QHash<QString, QString>& doiDesc = QHash<QString, QString>());
 
 private:
     void rebuildModelIndex();
