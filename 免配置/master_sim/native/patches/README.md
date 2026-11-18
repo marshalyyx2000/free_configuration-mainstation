@@ -11,6 +11,9 @@
 `reasonForInclusion`，不再丢弃报告；配合 `mms_master_cli.c` 按报告 DatSet 反查正确的 RCB，
 即可在 RptID 复用时仍把报告归属到正确的数据集。
 
+同一文件里还按 RCB 引用和 `<IED>NULL` 匹配报告标识（`native/rpt_id_match.h`）。
+只按本地对象引用登记处理器时，子站上送的 `<IED>NULL` 对不上，总召唤回调不会执行，点表后值保持为空。
+
 **应用**（全新 clone 上游 v1.5.3 时；本仓库已 vendored 并含此修改，一般无需再 apply）：
 
 ```powershell

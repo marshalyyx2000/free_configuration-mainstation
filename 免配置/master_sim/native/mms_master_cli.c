@@ -5,6 +5,7 @@
 #include "iec61850_common.h"
 #include "linked_list.h"
 #include "comm_state_refs.h"
+#include "rpt_id_match.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,6 +73,7 @@ typedef struct {
     ClientDataSet clientDataSet;
     LinkedList dataSetDirectory;
     MmsValue* prevDsValues;
+    bool giPending;
 } ActiveRcb;
 
 static ActiveRcb g_rcbs[MAX_RCB];
@@ -129,7 +131,7 @@ static void emit_ok(const char* cmd) {
 }
 
 static void emit_rcb_enabled(const char* handlerRef, const char* rcbGetRef, int already, int verified,
-    const char* dsRef)
+    const char* dsRef, const char* rptId)
 {
     stdout_lock();
     printf("{\"evt\":\"rcb_enabled\",\"handlerRef\":");
@@ -139,6 +141,10 @@ static void emit_rcb_enabled(const char* handlerRef, const char* rcbGetRef, int 
     if (dsRef && dsRef[0]) {
         printf(",\"dsRef\":");
         json_escape_print(stdout, dsRef);
+    }
+    if (rptId && rptId[0]) {
+        printf(",\"rptId\":");
+        json_escape_print(stdout, rptId);
     }
     if (already)
         printf(",\"already\":true");
@@ -171,6 +177,83 @@ static bool read_rcb_bool_leaf(const char* rcbGetRef, const char* attr)
     bool out = (MmsValue_getType(v) == MMS_BOOLEAN) && MmsValue_getBoolean(v);
     MmsValue_delete(v);
     return out;
+}
+
+static bool read_rcb_vistring_leaf(const char* rcbGetRef, const char* attr, char* out, size_t outsz)
+{
+    char domain[65];
+    char item[160];
+    MmsConnection mms;
+    MmsError err = MMS_ERROR_NONE;
+    MmsValue* v;
+    MmsType t;
+    bool ok = false;
+    if (out && outsz)
+        out[0] = 0;
+    if (!g_con || !out || outsz == 0)
+        return false;
+    if (!parse_dataset_ref(rcbGetRef, domain, sizeof(domain), item, sizeof(item)))
+        return false;
+    {
+        size_t n = strlen(item);
+        size_t alen = strlen(attr);
+        if (n + 1 + alen >= sizeof(item))
+            return false;
+        item[n] = '$';
+        memcpy(item + n + 1, attr, alen + 1);
+    }
+    mms = IedConnection_getMmsConnection(g_con);
+    if (!mms)
+        return false;
+    v = MmsConnection_readVariable(mms, &err, domain, item);
+    if (!v || err != MMS_ERROR_NONE) {
+        if (v)
+            MmsValue_delete(v);
+        return false;
+    }
+    t = MmsValue_getType(v);
+    if (t == MMS_VISIBLE_STRING || t == MMS_STRING) {
+        const char* s = MmsValue_toString(v);
+        if (s && s[0]) {
+            strncpy(out, s, outsz - 1);
+            out[outsz - 1] = 0;
+            ok = true;
+        }
+    }
+    MmsValue_delete(v);
+    return ok;
+}
+
+static void choose_listen_rpt_id(const char* rcbGetRef, char* out, size_t outsz)
+{
+    char server[130];
+    char domain[80];
+    char ied[80];
+    const char* cut;
+    size_t n;
+    server[0] = 0;
+    out[0] = 0;
+    if (!rcbGetRef || !out || outsz == 0)
+        return;
+    if (read_rcb_vistring_leaf(rcbGetRef, "RptID", server, sizeof(server))
+        && server[0] && !rpt_id_is_null_token(server)) {
+        strncpy(out, server, outsz - 1);
+        out[outsz - 1] = 0;
+        return;
+    }
+    cut = strchr(rcbGetRef, '/');
+    if (!cut)
+        cut = strchr(rcbGetRef, '.');
+    n = cut ? (size_t)(cut - rcbGetRef) : strlen(rcbGetRef);
+    if (n >= sizeof(domain))
+        n = sizeof(domain) - 1;
+    memcpy(domain, rcbGetRef, n);
+    domain[n] = 0;
+    rpt_id_ied_from_domain(domain, ied, sizeof(ied));
+    if (ied[0])
+        snprintf(out, outsz, "%sNULL", ied);
+    else
+        snprintf(out, outsz, "%s", rcbGetRef);
 }
 
 static ClientReportControlBlock get_or_create_rcb(const char* rcbGetRef, IedClientError* err)
@@ -728,6 +811,7 @@ static void reportCallback(void* parameter, ClientReport report) {
     const char* dsOut = (dataSetName && dataSetName[0]) ? skip_ds_at(dataSetName)
                                                        : (target->dsRef[0] ? target->dsRef : "");
     const bool hasReason = ClientReport_hasReasonForInclusion(report);
+    const int forceAll = (target->giPending || slot->giPending) ? 1 : 0;
 
     stdout_lock();
     printf("{\"evt\":\"report\",\"rcb\":");
@@ -743,13 +827,13 @@ static void reportCallback(void* parameter, ClientReport report) {
             : IEC61850_REASON_GI;
         MmsValue* curVal = dataSetValues ? MmsValue_getElement(dataSetValues, i) : NULL;
         MmsValue* prevVal = (target->prevDsValues && dataSetValues) ? MmsValue_getElement(target->prevDsValues, i) : NULL;
+        if (!report_item_keep((int)reason, (int)IEC61850_REASON_NOT_INCLUDED,
+                (curVal && report_item_value_changed(curVal, prevVal)) ? 1 : 0, forceAll && curVal)) {
+            continue;
+        }
         if (reason == IEC61850_REASON_NOT_INCLUDED) {
-            /* Vendor 突发性 (e.g. reason code 0x40) may not map to IEC61850_REASON_DATA_CHANGE in the stack. */
-            if (curVal && report_item_value_changed(curVal, prevVal)) {
-                reason = IEC61850_REASON_DATA_CHANGE;
-            } else {
-                continue;
-            }
+            /* Vendor GI / 突发 may arrive as reason 0. A pending GI still fills every present value. */
+            reason = (forceAll && curVal) ? IEC61850_REASON_GI : IEC61850_REASON_DATA_CHANGE;
         }
         if (!first) {
             printf(",");
@@ -780,6 +864,10 @@ static void reportCallback(void* parameter, ClientReport report) {
     printf("]}\n");
     fflush(stdout);
     stdout_unlock();
+    if (forceAll) {
+        target->giPending = false;
+        slot->giPending = false;
+    }
     snapshot_report_values(target, dataSetValues);
 }
 
@@ -1566,7 +1654,8 @@ static void cmd_enable_rcb(const char* line) {
     ActiveRcb* existing = find_rcb_by_handler(handlerRef);
     if (existing) {
         const int verified = verify_rcb_rpt_ena_on_server(existing->rcbGetRef);
-        emit_rcb_enabled(handlerRef, existing->rcbGetRef, 1, verified, existing->dsRef);
+        emit_rcb_enabled(handlerRef, existing->rcbGetRef, 1, verified, existing->dsRef,
+            existing->rcb ? ClientReportControlBlock_getRptId(existing->rcb) : NULL);
         if (!verified)
             emit_error("RptEna verify failed (stale local slot)");
         return;
@@ -1591,8 +1680,12 @@ static void cmd_enable_rcb(const char* line) {
         emit_after_ied_error(err);
         return;
     }
-    if (!ClientReportControlBlock_getRptId(slot->rcb) || ClientReportControlBlock_getRptId(slot->rcb)[0] == 0)
-        ClientReportControlBlock_setRptId(slot->rcb, rcbGetRef);
+    {
+        char listenRpt[130];
+        choose_listen_rpt_id(rcbGetRef, listenRpt, sizeof(listenRpt));
+        if (listenRpt[0])
+            ClientReportControlBlock_setRptId(slot->rcb, listenRpt);
+    }
 
     if (!ClientReportControlBlock_isBuffered(slot->rcb)) {
         ClientReportControlBlock_setResv(slot->rcb, true);
@@ -1659,7 +1752,7 @@ static void cmd_enable_rcb(const char* line) {
         return;
     }
 
-    emit_rcb_enabled(handlerRef, rcbGetRef, 0, 1, dsRef);
+    emit_rcb_enabled(handlerRef, rcbGetRef, 0, 1, dsRef, ClientReportControlBlock_getRptId(slot->rcb));
     if (slot->clientDataSet) {
         MmsValue* seed = ClientDataSet_getValues(slot->clientDataSet);
         if (seed)
@@ -1703,8 +1796,11 @@ static void cmd_gi(const char* line) {
         return;
     }
     IedClientError err = IED_ERROR_OK;
+    slot->giPending = true;
     ClientReportControlBlock_setGI(slot->rcb, true);
     IedConnection_setRCBValues(g_con, &err, slot->rcb, RCB_ELEMENT_GI, true);
+    if (err != IED_ERROR_OK)
+        slot->giPending = false;
     if (err != IED_ERROR_OK) {
         emit_after_ied_error(err);
         return;

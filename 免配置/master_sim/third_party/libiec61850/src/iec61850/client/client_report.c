@@ -31,6 +31,8 @@
 
 #include "libiec61850_platform_includes.h"
 
+#include "../../../../../native/rpt_id_match.h"
+
 struct sClientReport
 {
     ReportCallbackFunction callback;
@@ -381,17 +383,13 @@ iedConnection_handleReport(IedConnection self, MmsValue* value)
 
     while (element != NULL) {
         ClientReport report = (ClientReport) element->data;
-        char defaultRptId[130];
-        char* rptId = report->rptId;
 
-        if ((rptId == NULL) || (strlen(rptId) == 0)) {
-            StringUtils_concatString(defaultRptId, 130, report->rcbReference, "");
-            StringUtils_replace(defaultRptId, '.', '$');
-
-            rptId = defaultRptId;
-        }
-
-        if (strcmp(MmsValue_toString(rptIdValue), rptId) == 0) {
+        /*
+         * Exact RptID, the RCB object reference, and the configuration-free
+         * rewrite of rptID="NULL" to "<IED>NULL" all have to reach the callback.
+         * The callback re-dispatches by DatSet when one RptID is shared.
+         */
+        if (rpt_id_matches(MmsValue_toString(rptIdValue), report->rptId, report->rcbReference)) {
             matchingReport = report;
             break;
         }

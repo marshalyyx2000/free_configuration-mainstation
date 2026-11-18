@@ -18,6 +18,12 @@ QString formatReportValue(const QJsonValue& v)
             return QString();
         if (arr.size() == 1)
             return formatReportValue(arr.at(0));
+        /* 数据集读值和总召唤上送的 CDC 通常是 [数据值, 品质, 时标]。表格里只填数据值。 */
+        if (arr.size() <= 4) {
+            const QString head = formatReportValue(arr.at(0));
+            if (!head.isEmpty())
+                return head;
+        }
         QStringList parts;
         parts.reserve(arr.size());
         for (const QJsonValue& el : arr)
@@ -26,8 +32,15 @@ QString formatReportValue(const QJsonValue& v)
     }
     if (v.isObject()) {
         const QJsonObject o = v.toObject();
-        if (o.contains(QStringLiteral("stVal")))
-            return formatReportValue(o.value(QStringLiteral("stVal")));
+        const QString keys[] = {
+            QStringLiteral("stVal"), QStringLiteral("mag"), QStringLiteral("instMag"),
+            QStringLiteral("setVal"), QStringLiteral("setMag"), QStringLiteral("general"),
+            QStringLiteral("f"), QStringLiteral("i"),
+        };
+        for (const QString& key : keys) {
+            if (o.contains(key))
+                return formatReportValue(o.value(key));
+        }
     }
     return v.toVariant().toString();
 }

@@ -6,7 +6,6 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QJsonArray>
-#include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
 #include <QBrush>
@@ -24,17 +23,7 @@
 
 QString ReportCtrlPanel::jsonValueText(const QJsonValue& v)
 {
-    if (v.isBool())
-        return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
-    if (v.isDouble())
-        return QString::number(v.toDouble(), 'g', 12);
-    if (v.isString())
-        return v.toString();
-    if (v.isArray())
-        return QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact));
-    if (v.isObject())
-        return QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
-    return QString();
+    return formatReportValue(v);
 }
 
 ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWidget* parent)
@@ -330,7 +319,6 @@ void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& it
                 if (ScdModelLoader::addressMatchesMmsDataRef(ds->members[i].address, name))
                     return i;
             }
-            return -1;
         }
         if (!name.isEmpty()) {
             for (int i = 0; i < rows.size(); ++i) {
@@ -339,7 +327,10 @@ void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& it
                     return i;
             }
         }
-        if (ds && (idx < 0 || idx >= ds->members.size()))
+        /* 总召唤/报告经常只带数据集下标，或带的 MMS 引用对不上 SCD 地址。下标仍是成员序号。 */
+        if (idx < 0)
+            return -1;
+        if (ds && idx >= ds->members.size())
             return -1;
         return idx;
     };
@@ -357,10 +348,10 @@ void ReportCtrlPanel::ingestReportItems(const RowInfo& row, const QJsonArray& it
         }
         QJsonObject o = rows.at(r).toObject();
         o.insert(QStringLiteral("idx"), r);
-        if (!name.isEmpty())
-            o.insert(QStringLiteral("name"), name);
-        else if (ds && r < ds->members.size() && o.value(QStringLiteral("name")).toString().isEmpty())
+        if (ds && r < ds->members.size())
             o.insert(QStringLiteral("name"), ds->members[r].address);
+        else if (!name.isEmpty())
+            o.insert(QStringLiteral("name"), name);
         o.insert(QStringLiteral("value"), it.value(QStringLiteral("value")));
         rows[r] = o;
     }
@@ -651,16 +642,41 @@ void ReportCtrlPanel::fillLowerFromJson(const QJsonObject& evt)
         const QJsonObject m = members[i].toObject();
         const QString name = m.value(QStringLiteral("name")).toString();
         const QString val = jsonValueText(m.value(QStringLiteral("value")));
+        if (val.isEmpty() && m.value(QStringLiteral("value")).isNull())
+            continue;
         int rowIdx = findRowIndex(name);
         if (rowIdx < 0) {
-            if (ds)
+            int idx = m.contains(QStringLiteral("idx")) ? m.value(QStringLiteral("idx")).toInt(-1) : i;
+            if (idx < 0)
+                idx = i;
+            const int limit = ds ? ds->members.size() : m_lower->rowCount();
+            if (ds && idx >= 0 && idx < ds->members.size())
+                rowIdx = idx;
+            else if (!ds && idx >= 0)
+                rowIdx = idx;
+            else if (limit > 0 && i >= 0 && i < limit)
+                rowIdx = i;
+        }
+        if (rowIdx < 0)
+            continue;
+        if (rowIdx >= m_lower->rowCount()) {
+            if (ds && rowIdx >= ds->members.size())
                 continue;
-            rowIdx = i;
-            if (m_lower->rowCount() <= rowIdx)
-                m_lower->setRowCount(rowIdx + 1);
-            const QString desc = ScdModelLoader::displayPointDesc(m_model, name, QString());
-            m_lower->setItem(rowIdx, 0, new QTableWidgetItem(desc));
-            m_lower->setItem(rowIdx, 1, new QTableWidgetItem(name));
+            m_lower->setRowCount(rowIdx + 1);
+        }
+        if (!m_lower->item(rowIdx, 0) || !m_lower->item(rowIdx, 1)) {
+            const QString addr = (ds && rowIdx < ds->members.size()) ? ds->members.at(rowIdx).address : name;
+            const QString desc = ScdModelLoader::displayPointDesc(m_model, addr, QString());
+            if (!m_lower->item(rowIdx, 0))
+                m_lower->setItem(rowIdx, 0, new QTableWidgetItem(desc));
+            if (!m_lower->item(rowIdx, 1))
+                m_lower->setItem(rowIdx, 1, new QTableWidgetItem(addr));
+        }
+        if (m_lower->item(rowIdx, 0) && m_lower->item(rowIdx, 1)) {
+            const QString existingDesc = m_lower->item(rowIdx, 0)->text();
+            const QString desc = ScdModelLoader::displayPointDesc(m_model, name.isEmpty() ? m_lower->item(rowIdx, 1)->text() : name, existingDesc);
+            if (ScdModelLoader::isHumanPointDesc(desc))
+                m_lower->item(rowIdx, 0)->setText(desc);
         } else {
             const QString existingDesc = m_lower->item(rowIdx, 0) ? m_lower->item(rowIdx, 0)->text() : QString();
             const QString desc = ScdModelLoader::displayPointDesc(m_model, name, existingDesc);

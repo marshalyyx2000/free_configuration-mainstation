@@ -28,7 +28,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets Xml Network Concurrent)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Xml Network Concurrent Test)
 
 add_library(miniz_vendored STATIC
     third_party/miniz/miniz.c
@@ -96,6 +96,17 @@ if(WIN32)
 endif()
 
 install(TARGETS sim_master_qt RUNTIME DESTINATION bin)
+
+add_executable(test_event_format
+    tests/test_event_format.cpp
+    src/event/event_format.cpp
+    src/event/event_store.cpp
+)
+target_include_directories(test_event_format PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_event_format PRIVATE Qt6::Core Qt6::Test)
+if(MSVC)
+  target_compile_options(test_event_format PRIVATE /utf-8)
+endif()
 
 # Always register the CLI install rule. EXISTS at configure time would skip
 # packing mms_master_cli.exe if cmake ran before the native CLI was built.
