@@ -1,3 +1,0 @@
-# libkemyond / libgpiod 访问 LED、失电等 GPIO 需要读写 gpiochip 设备。
-# 将业务用户加入 gpio 组后，普通权限即可调用 SetLEDValue / GetLEDValue。
-SUBSYSTEM=="gpio", KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"

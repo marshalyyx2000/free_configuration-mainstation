@@ -1,20 +1,55 @@
-# Nested clones (keep separate)
-免配置/configuration-free/
+# 仓库只纳入下列路径（其余一律忽略，工作目录仍可保留本地文件）：
+#   免配置/master_sim/
+#   免配置/ops/
+#   免配置/SubStation.icd、SubStation_26579.icd
+#   免配置/*.docx、*.md（见下方 ! 规则）
+#   免配置/fix-admin-bashrc.sh
 
-# Build outputs
+# --- 仓库根：除 .gitignore 与 免配置 外全部忽略 ---
+/*
+!/.gitignore
+!/免配置/
+
+# --- 免配置：先忽略全部，再白名单放开 ---
+免配置/*
+!免配置/master_sim/
+!免配置/master_sim/**
+!免配置/ops/
+!免配置/ops/**
+!免配置/SubStation.icd
+!免配置/SubStation_26579.icd
+!免配置/保信子站免配置技术方案_20251120.docx
+!免配置/保信子站免配置技术方案_20251120_规范版.docx
+!免配置/仿真主站闭环-实施计划.md
+!免配置/仿真主站需求说明.docx
+!免配置/仿真主站需求说明.md
+!免配置/诊断-主站订阅召唤失败-修复记录.md
+!免配置/fix-admin-bashrc.sh
+
+# 子站源码：独立 Git，永不纳入本仓
+免配置/configuration-free/
+免配置/configuration-free-本地未push版本/
+
+# master_sim 构建产物（源码树内）
 免配置/master_sim/build-win/
 免配置/master_sim/build-cli/
 免配置/master_sim/build-mingw/
+免配置/master_sim/build-qt/
 免配置/master_sim/bin/
+免配置/master_sim/sim_master_qt/build-qt/
+免配置/master_sim/sim_master_qt/dist/
+免配置/master_sim/native/build/
 
-# Python
+# 工作区常见垃圾（根目录及任意深度）
 __pycache__/
 *.py[cod]
 *.pyo
 .Python
 *.egg-info/
-
-# IDE / OS
+*.log
+aqtinstall.log
+debug.log
+*.exe
 .idea/
 .vscode/
 Thumbs.db
