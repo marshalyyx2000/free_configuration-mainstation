@@ -6,14 +6,16 @@ if(NOT LIBIEC61850_BUILD)
   set(LIBIEC61850_BUILD "${CMAKE_CURRENT_LIST_DIR}/../build-win")
 endif()
 
-add_executable(mms_master_cli mms_master_cli.c ied_client_error.c comm_state_refs.c)
+add_executable(mms_master_cli mms_master_cli.c ied_client_error.c comm_state_refs.c stdout_queue.c)
 
 add_executable(test_comm_state_refs comm_state_refs.c test_comm_state_refs.c)
 add_executable(test_rpt_id_match test_rpt_id_match.c)
+add_executable(test_stdout_queue stdout_queue.c test_stdout_queue.c)
 if(MSVC)
   target_compile_options(mms_master_cli PRIVATE /utf-8)
   target_compile_options(test_comm_state_refs PRIVATE /utf-8)
   target_compile_options(test_rpt_id_match PRIVATE /utf-8)
+  target_compile_options(test_stdout_queue PRIVATE /utf-8)
   set_target_properties(test_comm_state_refs PROPERTIES
     LINK_FLAGS "/SUBSYSTEM:CONSOLE")
 endif()

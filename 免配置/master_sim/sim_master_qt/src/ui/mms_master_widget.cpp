@@ -165,6 +165,15 @@ MmsMasterWidget::MmsMasterWidget(SharedConnectionSettings* settings, QWidget* pa
         ++m_subIndex;
         pumpSubscribeNext();
     });
+    m_giWaitTimer.setSingleShot(true);
+    connect(&m_giWaitTimer, &QTimer::timeout, this, [this]() {
+        if (!m_giInFlight)
+            return;
+        ++m_giFail;
+        m_giInFlight = false;
+        appendMmsLog(tr("总召唤超时，继续下一块"));
+        pumpGiNext();
+    });
 
     if (!QCoreApplication::arguments().contains(QStringLiteral("--verify-gui")))
         loadDefaultData();
@@ -1129,10 +1138,71 @@ void MmsMasterWidget::giAllStationInternal(bool userInitiated)
             QMessageBox::warning(this, tr("提示"), tr("全站总召唤未执行：请先全站订阅"));
         return;
     }
-    const QSet<QString> handlers = m_subscribedHandlers;
-    for (const QString& h : handlers)
-        m_mms.triggerGi(h);
-    appendMmsLog(tr("全站总召唤：已向 %1 个报告控制块发出总召唤").arg(handlers.size()));
+    if (m_giActive) {
+        if (userInitiated)
+            appendMmsLog(tr("全站总召唤仍在进行（%1/%2）").arg(m_giOk + m_giFail).arg(m_giTotal));
+        return;
+    }
+    m_giQueue.clear();
+    for (const QString& h : m_subscribedHandlers)
+        m_giQueue.append(h);
+    m_giTotal = m_giQueue.size();
+    m_giOk = 0;
+    m_giFail = 0;
+    m_giActive = true;
+    m_giInFlight = false;
+    if (m_giProg) {
+        m_giProg->deleteLater();
+        m_giProg = nullptr;
+    }
+    if (userInitiated && m_giTotal > 1) {
+        m_giProg = new QProgressDialog(tr("全站总召唤…"), tr("取消"), 0, m_giTotal, this);
+        m_giProg->setWindowModality(Qt::NonModal);
+        m_giProg->setMinimumDuration(0);
+        m_giProg->setValue(0);
+        connect(m_giProg, &QProgressDialog::canceled, this, [this]() { finishGiQueue(tr("已取消")); });
+    }
+    appendMmsLog(tr("全站总召唤：开始逐个写入 %1 个报告控制块").arg(m_giTotal));
+    pumpGiNext();
+}
+
+void MmsMasterWidget::pumpGiNext()
+{
+    if (!m_giActive)
+        return;
+    if (m_giProg && m_giProg->wasCanceled()) {
+        finishGiQueue(tr("已取消"));
+        return;
+    }
+    if (m_giQueue.isEmpty()) {
+        finishGiQueue(QString());
+        return;
+    }
+    if (!m_mms.connected()) {
+        finishGiQueue(tr("连接已断开"));
+        return;
+    }
+    const QString handler = m_giQueue.takeFirst();
+    m_giInFlight = true;
+    m_giWaitTimer.start(20000);
+    m_mms.triggerGi(handler);
+}
+
+void MmsMasterWidget::finishGiQueue(const QString& reason)
+{
+    m_giWaitTimer.stop();
+    m_giInFlight = false;
+    m_giQueue.clear();
+    m_giActive = false;
+    if (m_giProg) {
+        m_giProg->setValue(m_giTotal);
+        m_giProg->deleteLater();
+        m_giProg = nullptr;
+    }
+    if (!reason.isEmpty())
+        appendMmsLog(tr("全站总召唤%1：成功 %2，失败 %3").arg(reason).arg(m_giOk).arg(m_giFail));
+    else
+        appendMmsLog(tr("全站总召唤完成：成功 %1，失败 %2 / %3").arg(m_giOk).arg(m_giFail).arg(m_giTotal));
 }
 
 void MmsMasterWidget::markLinkLost(const QString& reason)
@@ -1147,6 +1217,8 @@ void MmsMasterWidget::markLinkLost(const QString& reason)
     clearCommStateSnapshot();
     m_subscribedHandlers.clear();
     m_subscribeFailures.clear();
+    if (m_giActive)
+        finishGiQueue(tr("连接已断开"));
     updateSubscribedUi();
     m_linkStatus->setText(tr("未连接"));
     m_linkStatus->setStyleSheet(QStringLiteral("color:#a00; font-weight:bold; padding-left:8px;"));
@@ -1513,7 +1585,19 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
         const QString cmd = evt.value(QStringLiteral("cmd")).toString();
         const QString handler = evt.value(QStringLiteral("handlerRef")).toString();
         if (cmd == QStringLiteral("gi")) {
-            appendMmsLog(tr("总召唤已发送"));
+            if (m_giActive && m_giInFlight) {
+                m_giWaitTimer.stop();
+                m_giInFlight = false;
+                ++m_giOk;
+                const int done = m_giOk + m_giFail;
+                if (m_giProg)
+                    m_giProg->setValue(qMin(done, m_giTotal));
+                if (done == 1 || done == m_giTotal || (done % 50) == 0)
+                    appendMmsLog(tr("总召唤进度 %1/%2").arg(done).arg(m_giTotal));
+                QTimer::singleShot(0, this, [this]() { pumpGiNext(); });
+            } else {
+                appendMmsLog(tr("总召唤已发送"));
+            }
             if (!handler.isEmpty()) {
                 appendRcbControlEvent(StationEventCategory::rcbGi(), handler,
                     tr("已向报告控制块发出总召唤：%1").arg(handler.section(QLatin1Char('$'), -1)));
@@ -1599,6 +1683,19 @@ void MmsMasterWidget::onMmsEvent(const QJsonObject& evt)
     }
     if (type == QStringLiteral("error")) {
         const QString msg = evt.value(QStringLiteral("msg")).toString();
+        if (m_giActive && m_giInFlight && msg != QStringLiteral("CONNECTION_LOST")
+            && msg != QStringLiteral("NOT_CONNECTED")) {
+            m_giWaitTimer.stop();
+            m_giInFlight = false;
+            ++m_giFail;
+            const int done = m_giOk + m_giFail;
+            if (m_giProg)
+                m_giProg->setValue(qMin(done, m_giTotal));
+            if (m_giFail <= 3)
+                appendMmsLog(tr("总召唤写入失败: %1").arg(msg));
+            QTimer::singleShot(0, this, [this]() { pumpGiNext(); });
+            return;
+        }
         if (m_batchSubscribing && !m_subWaitingHandler.isEmpty()
             && msg != QStringLiteral("CONNECTION_LOST") && msg != QStringLiteral("NOT_CONNECTED")) {
             const QString handler = m_subWaitingHandler;

@@ -28,11 +28,13 @@ void EventStore::appendBatch(const QVector<StationEvent>& evs)
 {
     if (evs.isEmpty())
         return;
-    QMutexLocker locker(&m_mutex);
-    for (const StationEvent& ev : evs) {
-        m_events.append(ev);
-        while (m_events.size() > kMaxEvents)
-            m_events.removeFirst();
+    {
+        QMutexLocker locker(&m_mutex);
+        for (const StationEvent& ev : evs) {
+            m_events.append(ev);
+            while (m_events.size() > kMaxEvents)
+                m_events.removeFirst();
+        }
     }
     emit eventAppended();
 }

@@ -111,7 +111,6 @@ void MmsClientBridge::sendCommand(const QJsonObject& cmd)
         emit logMessage(tr("向 CLI 写入失败: %1").arg(m_proc.errorString()));
         return;
     }
-    m_proc.waitForBytesWritten(3000);
 }
 
 void MmsClientBridge::flushPending()

@@ -37,6 +37,7 @@ private slots:
 
 private:
     void rebuildFiltered();
+    void scheduleRefresh();
     void updateDetailFromTree(QTreeWidget* tree);
     enum ViewMode { Flat, ByIed, ByRcb };
 

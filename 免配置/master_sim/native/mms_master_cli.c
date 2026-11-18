@@ -6,6 +6,7 @@
 #include "linked_list.h"
 #include "comm_state_refs.h"
 #include "rpt_id_match.h"
+#include "stdout_queue.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -344,7 +345,7 @@ static int json_bool(const char* line, const char* key, int def) {
     return atoi(p) != 0 ? 1 : def;
 }
 
-static void print_mms_json(MmsValue* val);
+static void print_mms_json(FILE* out, MmsValue* val);
 
 static int json_str_array(const char* line, const char* key, char out[][ITEM_LEN], int maxn) {
     char pattern[64];
@@ -647,7 +648,7 @@ static void emit_dataset_values(const char* ref, MmsValue* values, const char* s
             printf(",");
         }
         printf("{\"idx\":%d,\"name\":\"\",\"value\":", i);
-        print_mms_json(asArray ? MmsValue_getElement(values, i) : values);
+        print_mms_json(stdout, asArray ? MmsValue_getElement(values, i) : values);
         printf("}");
     }
     printf("]}\n");
@@ -673,48 +674,49 @@ static bool comm_stval_from_item(MmsValue* item, bool* out) {
     return false;
 }
 
-static void print_mms_json(MmsValue* val) {
+static void print_mms_json(FILE* out, MmsValue* val) {
+    if (!out)
+        return;
     if (!val) {
-        printf("null");
+        fputs("null", out);
         return;
     }
     char buf[512];
     switch (MmsValue_getType(val)) {
     case MMS_BOOLEAN:
-        printf("%s", MmsValue_getBoolean(val) ? "true" : "false");
+        fputs(MmsValue_getBoolean(val) ? "true" : "false", out);
         break;
     case MMS_INTEGER:
-        printf("%lld", (long long)MmsValue_toInt64(val));
+        fprintf(out, "%lld", (long long)MmsValue_toInt64(val));
         break;
     case MMS_UNSIGNED:
-        printf("%llu", (unsigned long long)MmsValue_toUint32(val));
+        fprintf(out, "%llu", (unsigned long long)MmsValue_toUint32(val));
         break;
     case MMS_FLOAT:
-        printf("%g", MmsValue_toFloat(val));
+        fprintf(out, "%g", MmsValue_toFloat(val));
         break;
     case MMS_VISIBLE_STRING:
     case MMS_STRING:
         buf[0] = 0;
         MmsValue_printToBuffer(val, buf, (int)sizeof(buf));
-        json_escape_print(stdout, buf);
+        json_escape_print(out, buf);
         break;
     case MMS_STRUCTURE:
     case MMS_ARRAY: {
         int n = MmsValue_getArraySize(val);
-        printf("[");
+        fputc('[', out);
         for (int i = 0; i < n; i++) {
-            if (i) {
-                printf(",");
-            }
-            print_mms_json(MmsValue_getElement(val, i));
+            if (i)
+                fputc(',', out);
+            print_mms_json(out, MmsValue_getElement(val, i));
         }
-        printf("]");
+        fputc(']', out);
         break;
     }
     default:
         buf[0] = 0;
         MmsValue_printToBuffer(val, buf, (int)sizeof(buf));
-        json_escape_print(stdout, buf);
+        json_escape_print(out, buf);
         break;
     }
 }
@@ -813,12 +815,15 @@ static void reportCallback(void* parameter, ClientReport report) {
     const bool hasReason = ClientReport_hasReasonForInclusion(report);
     const int forceAll = (target->giPending || slot->giPending) ? 1 : 0;
 
-    stdout_lock();
-    printf("{\"evt\":\"report\",\"rcb\":");
-    json_escape_print(stdout, rcbRef ? rcbRef : "");
-    printf(",\"ds\":");
-    json_escape_print(stdout, dsOut ? dsOut : "");
-    printf(",\"items\":[");
+    /* 收到报告的线程不能写 stdout：管道满时会占住协议栈锁，总召唤写发不出去。 */
+    FILE* out = tmpfile();
+    if (!out)
+        return;
+    fputs("{\"evt\":\"report\",\"rcb\":", out);
+    json_escape_print(out, rcbRef ? rcbRef : "");
+    fputs(",\"ds\":", out);
+    json_escape_print(out, dsOut ? dsOut : "");
+    fputs(",\"items\":[", out);
     int first = 1;
     int n = dataSetValues ? MmsValue_getArraySize(dataSetValues) : 0;
     for (int i = 0; i < n; i++) {
@@ -835,9 +840,8 @@ static void reportCallback(void* parameter, ClientReport report) {
             /* Vendor GI / 突发 may arrive as reason 0. A pending GI still fills every present value. */
             reason = (forceAll && curVal) ? IEC61850_REASON_GI : IEC61850_REASON_DATA_CHANGE;
         }
-        if (!first) {
-            printf(",");
-        }
+        if (!first)
+            fputc(',', out);
         first = 0;
         const char* name = "";
         if (ClientReport_hasDataReference(report)) {
@@ -852,18 +856,31 @@ static void reportCallback(void* parameter, ClientReport report) {
                 name = (const char*)entry->data;
             }
         }
-        printf("{\"idx\":%d,\"reason\":%d,\"name\":", i, (int)reason);
-        json_escape_print(stdout, name);
-        printf(",\"value\":");
-        print_mms_json(MmsValue_getElement(dataSetValues, i));
-        if (ClientReport_hasTimestamp(report)) {
-            printf(",\"ts_ms\":%llu", (unsigned long long)ClientReport_getTimestamp(report));
-        }
-        printf("}");
+        fprintf(out, "{\"idx\":%d,\"reason\":%d,\"name\":", i, (int)reason);
+        json_escape_print(out, name);
+        fputs(",\"value\":", out);
+        print_mms_json(out, MmsValue_getElement(dataSetValues, i));
+        if (ClientReport_hasTimestamp(report))
+            fprintf(out, ",\"ts_ms\":%llu", (unsigned long long)ClientReport_getTimestamp(report));
+        fputc('}', out);
     }
-    printf("]}\n");
-    fflush(stdout);
-    stdout_unlock();
+    fputs("]}", out);
+    fflush(out);
+    {
+        long sz = ftell(out);
+        char* line = NULL;
+        if (sz > 0 && sz < 8 * 1024 * 1024) {
+            line = (char*)malloc((size_t)sz + 1);
+            if (line) {
+                rewind(out);
+                size_t nread = fread(line, 1, (size_t)sz, out);
+                line[nread] = 0;
+                stdout_queue_push(line);
+                free(line);
+            }
+        }
+    }
+    fclose(out);
     if (forceAll) {
         target->giPending = false;
         slot->giPending = false;
@@ -1952,23 +1969,77 @@ static void dispatch(const char* line) {
     }
 }
 
+static int read_command_line(char* line, size_t cap)
+{
+#ifdef _WIN32
+    HANDLE hin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD avail = 0;
+    static char acc[MAX_LINE];
+    static size_t acc_len = 0;
+    if (PeekNamedPipe(hin, NULL, 0, NULL, &avail, NULL)) {
+        while (avail > 0 && acc_len + 1 < sizeof(acc)) {
+            char tmp[1024];
+            DWORD n = 0;
+            DWORD chunk = avail > sizeof(tmp) ? (DWORD)sizeof(tmp) : avail;
+            if (!ReadFile(hin, tmp, chunk, &n, NULL) || n == 0)
+                break;
+            if (acc_len + n >= sizeof(acc))
+                n = (DWORD)(sizeof(acc) - 1 - acc_len);
+            memcpy(acc + acc_len, tmp, n);
+            acc_len += n;
+            avail -= n;
+        }
+        char* nl = (char*)memchr(acc, '\n', acc_len);
+        if (!nl) {
+            if (acc_len + 1 >= sizeof(acc))
+                acc_len = 0;
+            return 0;
+        }
+        size_t n = (size_t)(nl - acc);
+        if (n >= cap)
+            n = cap - 1;
+        memcpy(line, acc, n);
+        line[n] = 0;
+        size_t rest = acc_len - (size_t)(nl - acc) - 1;
+        memmove(acc, nl + 1, rest);
+        acc_len = rest;
+        while (n > 0 && line[n - 1] == '\r')
+            line[--n] = 0;
+        return line[0] ? 1 : 0;
+    }
+#endif
+    if (!fgets(line, (int)cap, stdin))
+        return -1;
+    size_t len = strlen(line);
+    while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r'))
+        line[--len] = 0;
+    return line[0] ? 1 : 0;
+}
+
 int main(void) {
     setvbuf(stdout, NULL, _IONBF, 0);
+    stdout_queue_init();
     char line[MAX_LINE];
     stdout_lock();
     printf("{\"evt\":\"ready\"}\n");
     fflush(stdout);
     stdout_unlock();
-    while (fgets(line, sizeof(line), stdin)) {
-        size_t len = strlen(line);
-        while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r')) {
-            line[--len] = 0;
-        }
-        if (len == 0) {
+    for (;;) {
+        stdout_queue_flush(stdout);
+        int got = read_command_line(line, sizeof(line));
+        if (got < 0)
+            break;
+        if (got == 0) {
+#ifdef _WIN32
+            Sleep(15);
+#else
+            break;
+#endif
             continue;
         }
         dispatch(line);
     }
+    stdout_queue_flush(stdout);
     cmd_disconnect_with_reason("stdin_eof");
     return 0;
 }

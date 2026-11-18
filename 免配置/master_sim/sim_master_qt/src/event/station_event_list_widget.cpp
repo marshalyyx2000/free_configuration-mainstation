@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPlainTextEdit>
+#include <QScrollBar>
 #include <QStackedWidget>
 #include <QTableView>
 #include <QTreeWidget>
@@ -170,17 +171,11 @@ StationEventListWidget::StationEventListWidget(EventStore* store, QWidget* paren
     connect(m_mode, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &StationEventListWidget::onFilterChanged);
     if (m_store)
         connect(m_store, &EventStore::eventAppended, this, [this]() {
-            if (!isVisible()) {
-                m_dirty = true;
+            m_dirty = true;
+            if (!isVisible())
                 return;
-            }
-            if (!m_refreshTimer) {
-                m_refreshTimer = new QTimer(this);
-                m_refreshTimer->setSingleShot(true);
-                m_refreshTimer->setInterval(80);
-                connect(m_refreshTimer, &QTimer::timeout, this, &StationEventListWidget::refreshView);
-            }
-            m_refreshTimer->start();
+            // 报文连续到达时不能把计时器反复拨回起点，否则列表要等突发结束才画出来。
+            scheduleRefresh();
         });
     refreshView();
 }
@@ -203,10 +198,33 @@ void StationEventListWidget::showEvent(QShowEvent* event)
     }
 }
 
+void StationEventListWidget::scheduleRefresh()
+{
+    if (!m_refreshTimer) {
+        m_refreshTimer = new QTimer(this);
+        m_refreshTimer->setSingleShot(true);
+        m_refreshTimer->setInterval(40);
+        connect(m_refreshTimer, &QTimer::timeout, this, &StationEventListWidget::refreshView);
+    }
+    if (!m_refreshTimer->isActive())
+        m_refreshTimer->start();
+}
+
 void StationEventListWidget::refreshView()
 {
+    QScrollBar* bar = m_table ? m_table->verticalScrollBar() : nullptr;
+    const int scroll = bar ? bar->value() : 0;
+    const bool atTop = scroll == 0;
     m_dirty = false;
     rebuildFiltered();
+    if (bar) {
+        if (atTop)
+            bar->setValue(0);
+        else
+            bar->setValue(qMin(scroll, bar->maximum()));
+    }
+    if (m_dirty && isVisible())
+        scheduleRefresh();
 }
 
 void StationEventListWidget::onFilterChanged()

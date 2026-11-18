@@ -88,6 +88,8 @@ private:
     ReportCtrlPanel* panelForIed(const QString& iedName, ReportPanelType type);
     void subscribeAllStationInternal(bool showProgress, bool giAfter = false);
     void giAllStationInternal(bool userInitiated);
+    void pumpGiNext();
+    void finishGiQueue(const QString& reason);
     void markLinkLost(const QString& reason);
     void reconnectAndRecover();
     void onConnectedAutoRecover();
@@ -154,6 +156,14 @@ private:
     QString m_subWaitingHandler;
     QSet<QString> m_subLatePending;
     QTimer m_subWaitTimer;
+    QStringList m_giQueue;
+    int m_giTotal = 0;
+    int m_giOk = 0;
+    int m_giFail = 0;
+    bool m_giActive = false;
+    bool m_giInFlight = false;
+    QTimer m_giWaitTimer;
+    QProgressDialog* m_giProg = nullptr;
     QProgressDialog* m_subProg = nullptr;
     QHash<QString, int> m_subFailByIed;
     QVector<SubFailEntry> m_subFailEntries;
