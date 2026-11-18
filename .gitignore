@@ -36,9 +36,11 @@
 免配置/master_sim/build-mingw/
 免配置/master_sim/build-qt/
 免配置/master_sim/bin/
+免配置/master_sim/out/
 免配置/master_sim/sim_master_qt/build-qt/
 免配置/master_sim/sim_master_qt/dist/
 免配置/master_sim/native/build/
+免配置/ops/_debug/
 
 # 工作区常见垃圾（根目录及任意深度）
 __pycache__/
