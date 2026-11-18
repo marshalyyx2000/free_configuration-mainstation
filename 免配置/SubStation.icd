@@ -1,0 +1,1897 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<SCL xmlns="http://www.iec.ch/61850/2003/SCL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.iec.ch/61850/2003/SCL SCL.xsd" xmlns:ext="http://www.nrec.com">
+  <Header id="template" version="1.00" revision="0.00" toolID="103TO61850" nameStructure="IEDName"/>
+  <Communication>
+    <SubNetwork name="NR-SubNectWork" type="8-MMS">
+      <ConnectedAP iedName="TEMPLATE" apName="S1" desc="IEC61850 Communication Description">
+        <Address>
+          <P type="OSI-AP-Title">1,3,9999,23</P>
+          <P type="OSI-AE-Qualifier">23</P>
+          <P type="OSI-PSEL">00000001</P>
+          <P type="OSI-SSEL">0001</P>
+          <P type="OSI-TSEL">0001</P>
+          <P type="IP">198.120.109.199</P>
+        </Address>
+        <PhysConn type="Connection">
+          <P type="Port">1-A</P>
+          <P type="Plug">RJ45</P>
+          <P type="Type">100BaseT</P>
+          <P type="Cable">1</P>
+        </PhysConn>
+        <PhysConn type="RedConn">
+          <P type="Port">1-B</P>
+          <P type="Plug">RJ45</P>
+          <P type="Type">100BaseT</P>
+          <P type="Cable">2</P>
+        </PhysConn>
+      </ConnectedAP>
+    </SubNetwork>
+  </Communication>
+  <IED name="TEMPLATE" type="AGENTCSG" manufacturer="NR" configVersion="1.00" desc="保信子站">
+    <Services>
+      <DynAssociation/>
+      <GetDirectory/>
+      <GetDataObjectDefinition/>
+      <DataObjectDirectory/>
+      <GetDataSetValue/>
+      <SetDataSetValue/>
+      <DataSetDirectory/>
+      <ConfDataSet max="50" maxAttributes="256"/>
+      <ReadWrite/>
+      <ConfReportControl max="50"/>
+      <GetCBValues/>
+      <ReportSettings cbName="Conf" datSet="Conf" rptID="Dyn" optFields="Dyn" bufTime="Fix" trgOps="Dyn" intgPd="Dyn"/>
+      <FileHandling/>
+      <ConfLNs fixPrefix="true" fixLnInst="true"/>
+    </Services>
+    <AccessPoint name="S1" router="false" clock="false">
+      <Server timeout="120">
+        <Authentication none="true"/>
+        <LDevice inst="LD0" desc="保信子站信息">
+          <LN0 lnType="SUBSTATION_LLN0_V2.00" lnClass="LLN0" inst="" desc="LLN0">
+            <DataSet name="dsParameter" desc="保信子站台账信息">
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="PwrLev" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="Vendor" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="DevTyp" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="MnfDate" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="RunDate" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="SwRev" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="SwDate" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="VerifCode" fc="SP"/>
+              <FCDA ldInst="LD0" lnClass="SCIF" lnInst="1" doName="StaDskCap" fc="SP"/>
+            </DataSet>
+            <DataSet name="dsSelfChk" desc="保信子站自检">
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="CPUUseRat" fc="MX"/>
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="MemUseRat" fc="MX"/>
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="FreeDisk" fc="MX"/>
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="DskFreAlm" fc="ST"/>
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="GPSLostAlm" fc="ST"/>
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="OnMaintain" fc="ST"/>
+              <FCDA ldInst="LD0" lnClass="SPSI" lnInst="1" doName="CommBlkAlm" fc="ST"/>
+            </DataSet>           
+            <DataSet name="dsCommState" desc="保护装置通信状态">
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="1"  prefix="PL1001" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="2"  prefix="PL1002" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="3"  prefix="PL1003" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="4"  prefix="PL1004" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="5"  prefix="PC1001" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="6"  prefix="PC1002" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="7"  prefix="PT1001" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="8"  prefix="PL3501" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="9"  prefix="PL3502" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="10" prefix="PT1101" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="11" prefix="PT1102" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="12" prefix="PT1103" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="13" prefix="PT1104" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="14" prefix="PT1105" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="15" prefix="PL1101" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="16" prefix="PL1102" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="17" prefix="PM1101" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="18" prefix="PB1101" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="19" prefix="PD1101" />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="20" prefix="SDL9001"/>
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="21" prefix="PL071"  />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="22" prefix="PL072"  />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="23" prefix="PL073"  />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="24" prefix="PL074"  />
+              <FCDA doName="ComStatus" fc="ST" ldInst="LD0" lnClass="SDDI" lnInst="25" prefix="PE1001" />                        
+            </DataSet>            
+            <ReportControl name="brcbCommState" datSet="dsCommState" intgPd="0" rptID="LD0/LLN0$BR$brcbCommState" confRev="1" buffered="true" bufTime="0">
+              <TrgOps dchg="true" qchg="false" dupd="false" period="true"/>
+              <OptFields seqNum="false" timeStamp="true" dataSet="true" reasonCode="true" dataRef="true" entryID="true" configRef="true"/>
+              <RptEnabled max="16"/>
+            </ReportControl>
+            <ReportControl name="brcbSelfChk" datSet="dsSelfChk" intgPd="0" rptID="LD0/LLN0$BR$brcbSelfChk" confRev="1" buffered="true" bufTime="0">
+              <TrgOps dchg="true" qchg="false" dupd="false" period="true"/>
+              <OptFields seqNum="false" timeStamp="true" dataSet="true" reasonCode="true" dataRef="true" entryID="true" configRef="true"/>
+              <RptEnabled max="16"/>
+            </ReportControl>
+            <DOI name="Mod" desc="Mod">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Beh">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="NamPlt">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>NamPlt</Val>
+              </DAI>
+              <DAI name="configRev">
+                <Val>2015-05-02 16:22</Val>
+              </DAI>
+              <DAI name="ldNs">
+                <Val>IEC 61850-7-4:2003</Val>
+              </DAI>
+            </DOI>
+          </LN0>
+          <LN lnType="SUBSTATION_LPHD_V2.00" lnClass="LPHD" inst="1" desc="LPHD">
+            <DOI name="PhyNam" desc="PhyNam">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="hwRev">
+                <Val>NR0119-1 2012-02-08</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="serNum">
+                <Val>Temlic2018-02-256tmsl303ga5bdwax</Val>
+              </DAI>
+              <DAI name="model">
+                <Val>PCS-979X</Val>
+              </DAI>
+              <DAI name="location">
+                <Val>In substation</Val>
+              </DAI>
+            </DOI>
+            <DOI name="PhyHealth" desc="PhyHealth">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Proxy" desc="Proxy">
+              <DAI name="dU">
+                <Val>Proxy</Val>
+              </DAI>
+            </DOI>
+          </LN>
+          <LN lnType="SUBSTATION_SCIF_V2.00" lnClass="SCIF" inst="1" desc="保信子站台账信息">
+            <DOI name="Mod" desc="Mod">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Beh">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="NamPlt">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>NamPlt</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="PwrLev" desc="电压等级">
+              <DAI name="setVal">
+                <Val>交流110kV</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>电压等级</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Vendor" desc="制造厂商">
+              <DAI name="setVal">
+                <Val>南瑞继保工程技术有限公司</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>制造厂商</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="DevTyp" desc="设备型号">
+              <DAI name="setVal">
+                <Val>PCS-9798</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>设备型号</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="MnfDate" desc="出厂日期">
+              <DAI name="setVal">
+                <Val>2024-04-21</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>出厂日期</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="RunDate" desc="投运日期">
+              <DAI name="setVal">
+                <Val>2024-04-21</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>投运日期</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="SwRev" desc="程序版本">
+              <DAI name="setVal">
+                <Val>1.00</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>程序版本</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="SwDate" desc="程序日期">
+              <DAI name="setVal">
+                <Val>2024-04-21</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>程序日期</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="VerifCode" desc="检验码">
+              <DAI name="setVal">
+                <Val>HELP</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>检验码</Val>
+              </DAI>
+              <DAI name="cdcNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+              <DAI name="cdcName">
+                <Val>STG</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="StaDskCap" desc="保信子站系统（磁盘）容量">
+              <SDI name="setMag">
+                <DAI name="f">
+                  <Val>128</Val>
+                </DAI>
+              </SDI>
+              <DAI name="dU">
+                <Val>保信子站系统（磁盘）容量</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>
+          <LN lnType="SUBSTATION_SPSI_V2.00" lnClass="SPSI" inst="1" desc="保信子站自检信息">
+            <DOI name="Mod" desc="Mod">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Beh">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="NamPlt">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>NamPlt</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="CPUUseRat" desc="CPU使用率">
+              <SDI name="mag">
+                <DAI name="f"/>
+              </SDI>
+              <DAI name="dU">
+                <Val>CPU使用率</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="MemUseRat" desc="内存使用率">
+              <SDI name="mag">
+                <DAI name="f"/>
+              </SDI>
+              <DAI name="dU">
+                <Val>内存使用率</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="FreeDisk" desc="磁盘剩余容量（单位：M）">
+              <SDI name="mag">
+                <DAI name="f"/>
+              </SDI>
+              <DAI name="dU">
+                <Val>磁盘剩余容量（单位：M）</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="DskFreAlm" desc="磁盘容量不足告警">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>磁盘容量不足告警</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="GPSLostAlm" desc="GPS失步告警">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>GPS失步告警</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="OnMaintain" desc="保信子站装置检修">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>保信子站装置检修</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI name="CommBlkAlm" desc="与保信主站通信中断">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>与保信主站通信中断</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>                               
+          <LN desc="状态监视信息" prefix="PL1001" inst="1" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV大杨家隧道线083保测_PSL641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV大杨家隧道线083保测_PSL641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PL1002" inst="2" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV昔本线084保测_PSL641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV昔本线084保测_PSL641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PL1003" inst="3" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV勐托线085保测_PSL641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV勐托线085保测_PSL641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PL1004" inst="4" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV勐托线085保测_PSL641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV勐托线085保测_PSL641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>            
+          <LN desc="状态监视信息" prefix="PC1001" inst="5" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV#3电容器组DR081保测_PSC641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV#3电容器组DR081保测_PSC641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PC1002" inst="6" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV#4电容器组DR082保测_PSC641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV#4电容器组DR082保测_PSC641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PT1001" inst="7" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV#2站用变087保测_PST645U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV#2站用变087保测_PST645U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PL3501" inst="8" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="35kV腾圈T线384保测_PSL641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>35kV腾圈T线384保测_PSL641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>            
+          <LN desc="状态监视信息" prefix="PL3502" inst="9" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="35kV腾泰线385保测_CSC-213通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>35kV腾泰线385保测_CSC-213通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PT1101" inst="10" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV#2主变非电量保护_CSC-336C3N通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV#2主变非电量保护_CSC-336C3N通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PT1102" inst="11" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV#2主变差动保护_CSC-362GD通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV#2主变差动保护_CSC-362GD通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PT1103" inst="12" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV#2主变高后备保护_CSC-326GH通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV#2主变高后备保护_CSC-326GH通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>   
+          <LN desc="状态监视信息" prefix="PT1104" inst="13" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV#2主变中后备保护_CSC-326GM通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV#2主变中后备保护_CSC-326GM通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PT1105" inst="14" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV#2主变低后备保护_CSC-326GL通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV#2主变低后备保护_CSC-326GL通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PL1101" inst="15" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV昔腾Ⅰ回线182保护_NSR-201RDN通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV昔腾Ⅰ回线182保护_NSR-201RDN通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PL1102" inst="16" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV城龙线183保护_NSR-201RDN通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV城龙线183保护_NSR-201RDN通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PM1101" inst="17" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV母线保护_BP-2C通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV母线保护_BP-2C通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PB1101" inst="18" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="110kV备自投_PCS-9654通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>110kV备自投_PCS-9654通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PD1101" inst="19" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="低周低压保护_PCS-994通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>低周低压保护_PCS-994通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="SDL9001" inst="20" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="主变故障录波器_WDGL通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>主变故障录波器_WDGL通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>   
+          <LN desc="状态监视信息" prefix="PL071" inst="21" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV腾东线071保护_PSL-641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV腾东线071保护_PSL-641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PL072" inst="22" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV昔嘎线072保护_PSL-641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV昔嘎线072保护_PSL-641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>           
+          <LN desc="状态监视信息" prefix="PL073" inst="23" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV小勐准线073保护_PSL-641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV小勐准线073保护_PSL-641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>          
+          <LN desc="状态监视信息" prefix="PL074" inst="24" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV户有线074保护_PSL-641U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV户有线074保护_PSL-641U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>  
+          <LN desc="状态监视信息" prefix="PE1001" inst="25" lnClass="SDDI" lnType="SUBSTATION_SDDI_V2.00">
+            <DOI name="Mod" desc="Mode">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+              <DAI name="ctlModel">
+                <Val>status-only</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Beh" desc="Behaviour">
+              <DAI name="stVal">
+                <Val>on</Val>
+              </DAI>
+            </DOI>
+            <DOI name="Health" desc="Health">
+              <DAI name="stVal">
+                <Val>Ok</Val>
+              </DAI>
+            </DOI>
+            <DOI name="NamPlt" desc="Name Plate">
+              <DAI name="vendor">
+                <Val>NR</Val>
+              </DAI>
+              <DAI name="swRev">
+                <Val>R1.00</Val>
+              </DAI>
+              <DAI name="d">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="dU">
+                <Val>Name Plate</Val>
+              </DAI>
+              <DAI name="lnNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+            <DOI desc="10kV分段012保护_PSL-643U通信状态" name="ComStatus">
+              <DAI name="stVal"/>
+              <DAI name="dU">
+                <Val>10kV分段012保护_PSL-643U通信状态</Val>
+              </DAI>
+              <DAI name="dataNs">
+                <Val>NR PCS979X:2015</Val>
+              </DAI>
+            </DOI>
+          </LN>        
+        </LDevice>
+      </Server>
+    </AccessPoint>
+  </IED>
+  <DataTypeTemplates>
+    <LNodeType id="SUBSTATION_LLN0_V2.00" lnClass="LLN0">
+      <DO name="Mod" type="SUBSTATION_INC_Mod"/>
+      <DO name="Beh" type="SUBSTATION_INS_Beh"/>
+      <DO name="Health" type="SUBSTATION_INS_Health"/>
+      <DO name="NamPlt" type="SUBSTATION_LPL_LN0"/>
+    </LNodeType>
+    <LNodeType id="SUBSTATION_LPHD_V2.00" lnClass="LPHD">
+      <DO name="PhyNam" type="SUBSTATION_DPL"/>
+      <DO name="PhyHealth" type="SUBSTATION_INS_Health"/>
+      <DO name="Proxy" type="SUBSTATION_SPS"/>
+    </LNodeType>
+    <LNodeType id="SUBSTATION_SCIF_V2.00" lnClass="SCIF">
+      <DO name="Mod" type="SUBSTATION_INC_Mod" desc="Mode"/>
+      <DO name="Beh" type="SUBSTATION_INS_Beh" desc="Behaviour"/>
+      <DO name="Health" type="SUBSTATION_INS_Health" desc="Health"/>
+      <DO name="NamPlt" type="SUBSTATION_LPL_EX" desc="Name Plate"/>
+      <DO name="PwrLev" type="SUBSTATION_STG_SP_EX" desc="电压等级"/>
+      <DO name="Vendor" type="SUBSTATION_STG_SP_EX" desc="制造厂商"/>
+      <DO name="DevTyp" type="SUBSTATION_STG_SP_EX" desc="设备型号"/>
+      <DO name="MnfDate" type="SUBSTATION_STG_SP_EX" desc="出厂日期"/>
+      <DO name="RunDate" type="SUBSTATION_STG_SP_EX" desc="投运日期"/>
+      <DO name="SwRev" type="SUBSTATION_STG_SP_EX" desc="程序版本"/>
+      <DO name="SwDate" type="SUBSTATION_STG_SP_EX" desc="程序日期"/>
+      <DO name="VerifCode" type="SUBSTATION_STG_SP_EX" desc="检验码"/>
+      <DO name="StaDskCap" type="SUBSTATION_ASG_SP_EX" desc="保信子站系统（磁盘）容量"/>
+    </LNodeType>
+    <LNodeType id="SUBSTATION_SPSI_V2.00" lnClass="SPSI">
+      <DO name="Mod" type="SUBSTATION_INC_Mod" desc="Mode"/>
+      <DO name="Beh" type="SUBSTATION_INS_Beh" desc="Behaviour"/>
+      <DO name="Health" type="SUBSTATION_INS_Health" desc="Health"/>
+      <DO name="NamPlt" type="SUBSTATION_LPL_EX" desc="Name Plate"/>
+      <DO name="CPUUseRat" type="SUBSTATION_MV_EX" desc="CPU使用率"/>
+      <DO name="MemUseRat" type="SUBSTATION_MV_EX" desc="内存使用率"/>
+      <DO name="FreeDisk" type="SUBSTATION_MV_EX" desc="磁盘剩余容量（单位：M）"/>
+      <DO name="DskFreAlm" type="SUBSTATION_SPS_EX" desc="磁盘容量不足告警"/>
+      <DO name="GPSLostAlm" type="SUBSTATION_SPS_EX" desc="GPS失步告警"/>
+      <DO name="OnMaintain" type="SUBSTATION_SPS_EX" desc="保信子站装置检修"/>
+      <DO name="CommBlkAlm" type="SUBSTATION_SPS_EX" desc="与保信主站通信中断"/>
+    </LNodeType>    
+    <LNodeType id="SUBSTATION_SDDI_V2.00" lnClass="SDDI" desc="免配置保信子站状态监视信息">
+      <DO name="Mod" type="SUBSTATION_INC_Mod" desc="Mode"/>
+      <DO name="Beh" type="SUBSTATION_INS_Beh" desc="Behaviour"/>
+      <DO name="Health" type="SUBSTATION_INS_Health" desc="Health"/>
+      <DO name="NamPlt" type="SUBSTATION_LPL_EX" desc="Name Plate"/>
+      <DO name="ComStatus" type="SUBSTATION_SPS_EX" desc="与对应IED的通信状态"/>
+    </LNodeType>  
+    <DOType id="SUBSTATION_INC_Mod" cdc="INC">
+      <DA name="stVal" bType="Enum" type="Mod" dchg="true" fc="ST"/>
+      <DA name="q" bType="Quality" qchg="true" fc="ST"/>
+      <DA name="t" bType="Timestamp" fc="ST"/>
+      <DA name="ctlModel" bType="Enum" type="ctlModel" fc="CF">
+        <Val>0</Val>
+      </DA>
+    </DOType>
+    <DOType id="SUBSTATION_INS_Beh" cdc="INS">
+      <DA name="stVal" bType="Enum" type="Beh" dchg="true" fc="ST"/>
+      <DA name="q" bType="Quality" qchg="true" fc="ST"/>
+      <DA name="t" bType="Timestamp" fc="ST"/>
+    </DOType>
+    <DOType id="SUBSTATION_INS_Health" cdc="INS">
+      <DA name="stVal" bType="Enum" type="Health" dchg="true" fc="ST"/>
+      <DA name="q" bType="Quality" qchg="true" fc="ST"/>
+      <DA name="t" bType="Timestamp" fc="ST"/>
+    </DOType>    
+    <DOType id="SUBSTATION_LPL_LN0" cdc="LPL">
+      <DA name="vendor" bType="VisString255" fc="DC"/>
+      <DA name="swRev" bType="VisString255" fc="DC"/>
+      <DA name="d" bType="VisString255" fc="DC"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+      <DA name="configRev" bType="VisString255" fc="DC"/>
+      <DA name="ldNs" bType="VisString255" fc="EX">
+        <Val>IEC 61850-7-4:2003</Val>
+      </DA>
+    </DOType>
+    <DOType id="SUBSTATION_LPL" cdc="LPL">
+      <DA name="vendor" bType="VisString255" fc="DC"/>
+      <DA name="swRev" bType="VisString255" fc="DC"/>
+      <DA name="d" bType="VisString255" fc="DC"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+    </DOType>
+    <DOType id="SUBSTATION_LPL_EX" cdc="LPL">
+      <DA name="vendor" bType="VisString255" fc="DC"/>
+      <DA name="swRev" bType="VisString255" fc="DC"/>
+      <DA name="d" bType="VisString255" fc="DC"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+      <DA name="lnNs" bType="VisString255" fc="EX">
+        <Val>NR PCS979X:2015</Val>
+      </DA>
+    </DOType>
+    <DOType id="SUBSTATION_DPL" cdc="DPL">
+      <DA name="vendor" bType="VisString255" fc="DC"/>
+      <DA name="hwRev" bType="VisString255" fc="DC"/>
+      <DA name="swRev" bType="VisString255" fc="DC"/>
+      <DA name="serNum" bType="VisString255" fc="DC"/>
+      <DA name="model" bType="VisString255" fc="DC"/>
+      <DA name="location" bType="VisString255" fc="DC"/>
+    </DOType>
+    <DOType id="SUBSTATION_ASG_SP_EX" cdc="ASG">
+      <DA name="setMag" bType="Struct" type="SUBSTATION_AnalogueValue" fc="SP"/>
+      <DA name="units" bType="Struct" type="SUBSTATION_units" fc="CF"/>
+      <DA name="minVal" bType="Struct" type="SUBSTATION_AnalogueValue" fc="CF"/>
+      <DA name="maxVal" bType="Struct" type="SUBSTATION_AnalogueValue" fc="CF"/>
+      <DA name="stepSize" bType="Struct" type="SUBSTATION_AnalogueValue" fc="CF"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+      <DA name="dataNs" bType="VisString255" fc="EX">
+        <Val>NR PCS979X:2015</Val>
+      </DA>
+    </DOType>
+    <DOType id="SUBSTATION_MV_EX" cdc="MV">
+      <DA name="mag" bType="Struct" type="SUBSTATION_AnalogueValue" dchg="true" fc="MX"/>
+      <DA name="q" bType="Quality" qchg="true" fc="MX"/>
+      <DA name="t" bType="Timestamp" fc="MX"/>
+      <DA name="units" bType="Struct" type="SUBSTATION_units" fc="CF"/>
+      <DA name="db" bType="INT32U" fc="CF"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+      <DA name="dataNs" bType="VisString255" fc="EX">
+        <Val>NR PCS979X:2015</Val>
+      </DA>
+    </DOType>
+    <DOType id="SUBSTATION_SPS" cdc="SPS">
+      <DA name="stVal" bType="BOOLEAN" dchg="true" fc="ST"/>
+      <DA name="q" bType="Quality" qchg="true" fc="ST"/>
+      <DA name="t" bType="Timestamp" fc="ST"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+    </DOType>
+    <DOType id="SUBSTATION_SPS_EX" cdc="SPS">
+      <DA name="stVal" bType="BOOLEAN" dchg="true" fc="ST"/>
+      <DA name="q" bType="Quality" qchg="true" fc="ST"/>
+      <DA name="t" bType="Timestamp" fc="ST"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+      <DA name="dataNs" bType="VisString255" fc="EX">
+        <Val>NR PCS979X:2015</Val>
+      </DA>
+    </DOType>
+    <DOType id="SUBSTATION_STG_SP_EX" cdc="STG">
+      <DA name="setVal" bType="Unicode255" fc="SP"/>
+      <DA name="dU" bType="Unicode255" fc="DC"/>
+      <DA name="cdcNs" bType="VisString255" fc="EX">
+        <Val>NR PCS979X:2015</Val>
+      </DA>
+      <DA name="cdcName" bType="VisString255" fc="EX"/>
+      <DA name="dataNs" bType="VisString255" fc="EX">
+        <Val>NR PCS979X:2015</Val>
+      </DA>
+    </DOType>
+    <DAType id="SUBSTATION_AnalogueValue">
+      <BDA name="f" bType="FLOAT32"/>
+    </DAType>
+    <DAType id="SUBSTATION_units">
+      <BDA name="SIUnit" bType="Enum" type="SIUnit"/>
+      <BDA name="multiplier" bType="Enum" type="multiplier"/>
+    </DAType>
+    <EnumType id="Beh">
+      <EnumVal ord="1">on</EnumVal>
+      <EnumVal ord="2">blocked</EnumVal>
+      <EnumVal ord="3">test</EnumVal>
+      <EnumVal ord="4">test/blocked</EnumVal>
+      <EnumVal ord="5">off</EnumVal>
+    </EnumType>
+    <EnumType id="Mod">
+      <EnumVal ord="1">on</EnumVal>
+      <EnumVal ord="2">blocked</EnumVal>
+      <EnumVal ord="3">test</EnumVal>
+      <EnumVal ord="4">test/blocked</EnumVal>
+      <EnumVal ord="5">off</EnumVal>
+    </EnumType>
+    <EnumType id="Health">
+      <EnumVal ord="1">Ok</EnumVal>
+      <EnumVal ord="2">Warning</EnumVal>
+      <EnumVal ord="3">Alarm</EnumVal>
+    </EnumType>
+    <EnumType id="ctlModel">
+      <EnumVal ord="0">status-only</EnumVal>
+      <EnumVal ord="1">direct-with-normal-security</EnumVal>
+      <EnumVal ord="2">sbo-with-normal-security</EnumVal>
+      <EnumVal ord="3">direct-with-enhanced-security</EnumVal>
+      <EnumVal ord="4">sbo-with-enhanced-security</EnumVal>
+    </EnumType>
+    <EnumType id="multiplier">
+      <EnumVal ord="-24">y</EnumVal>
+      <EnumVal ord="-21">z</EnumVal>
+      <EnumVal ord="-18">a</EnumVal>
+      <EnumVal ord="-15">f</EnumVal>
+      <EnumVal ord="-12">p</EnumVal>
+      <EnumVal ord="-9">n</EnumVal>
+      <EnumVal ord="-6">µ</EnumVal>
+      <EnumVal ord="-3">m</EnumVal>
+      <EnumVal ord="-2">c</EnumVal>
+      <EnumVal ord="-1">d</EnumVal>
+      <EnumVal ord="0"/>
+      <EnumVal ord="1">da</EnumVal>
+      <EnumVal ord="2">h</EnumVal>
+      <EnumVal ord="3">k</EnumVal>
+      <EnumVal ord="6">M</EnumVal>
+      <EnumVal ord="9">G</EnumVal>
+      <EnumVal ord="12">T</EnumVal>
+      <EnumVal ord="15">P</EnumVal>
+      <EnumVal ord="18">E</EnumVal>
+      <EnumVal ord="21">Z</EnumVal>
+      <EnumVal ord="24">Y</EnumVal>
+    </EnumType>
+    <EnumType id="SIUnit">
+      <EnumVal ord="1"/>
+      <EnumVal ord="2">m</EnumVal>
+      <EnumVal ord="3">kg</EnumVal>
+      <EnumVal ord="4">s</EnumVal>
+      <EnumVal ord="5">A</EnumVal>
+      <EnumVal ord="6">K</EnumVal>
+      <EnumVal ord="7">mol</EnumVal>
+      <EnumVal ord="8">cd</EnumVal>
+      <EnumVal ord="9">deg</EnumVal>
+      <EnumVal ord="10">rad</EnumVal>
+      <EnumVal ord="11">sr</EnumVal>
+      <EnumVal ord="21">Gy</EnumVal>
+      <EnumVal ord="22">q</EnumVal>
+      <EnumVal ord="23">°C</EnumVal>
+      <EnumVal ord="24">Sv</EnumVal>
+      <EnumVal ord="25">F</EnumVal>
+      <EnumVal ord="26">C</EnumVal>
+      <EnumVal ord="27">S</EnumVal>
+      <EnumVal ord="28">H</EnumVal>
+      <EnumVal ord="29">V</EnumVal>
+      <EnumVal ord="30">ohm</EnumVal>
+      <EnumVal ord="31">J</EnumVal>
+      <EnumVal ord="32">N</EnumVal>
+      <EnumVal ord="33">Hz</EnumVal>
+      <EnumVal ord="34">lx</EnumVal>
+      <EnumVal ord="35">Lm</EnumVal>
+      <EnumVal ord="36">Wb</EnumVal>
+      <EnumVal ord="37">T</EnumVal>
+      <EnumVal ord="38">W</EnumVal>
+      <EnumVal ord="39">Pa</EnumVal>
+      <EnumVal ord="41">m²</EnumVal>
+      <EnumVal ord="42">m³</EnumVal>
+      <EnumVal ord="43">m/s</EnumVal>
+      <EnumVal ord="44">m/s²</EnumVal>
+      <EnumVal ord="45">m³/s</EnumVal>
+      <EnumVal ord="46">m/m³</EnumVal>
+      <EnumVal ord="47">M</EnumVal>
+      <EnumVal ord="48">kg/m³</EnumVal>
+      <EnumVal ord="49">m²/s</EnumVal>
+      <EnumVal ord="50">W/m K</EnumVal>
+      <EnumVal ord="51">J/K</EnumVal>
+      <EnumVal ord="52">ppm</EnumVal>
+      <EnumVal ord="53">1/s</EnumVal>
+      <EnumVal ord="54">rad/s</EnumVal>
+      <EnumVal ord="61">VA</EnumVal>
+      <EnumVal ord="62">Watts</EnumVal>
+      <EnumVal ord="63">VAr</EnumVal>
+      <EnumVal ord="64">phi</EnumVal>
+      <EnumVal ord="65">cos(phi)</EnumVal>
+      <EnumVal ord="66">Vs</EnumVal>
+      <EnumVal ord="67">V²</EnumVal>
+      <EnumVal ord="68">As</EnumVal>
+      <EnumVal ord="69">A²</EnumVal>
+      <EnumVal ord="70">A²t</EnumVal>
+      <EnumVal ord="71">VAh</EnumVal>
+      <EnumVal ord="72">Wh</EnumVal>
+      <EnumVal ord="73">VArh</EnumVal>
+      <EnumVal ord="74">V/Hz</EnumVal>
+    </EnumType>
+    <EnumType id="orCategory">
+      <EnumVal ord="0">not-supported</EnumVal>
+      <EnumVal ord="1">bay-control</EnumVal>
+      <EnumVal ord="2">station-control</EnumVal>
+      <EnumVal ord="3">remote-control</EnumVal>
+      <EnumVal ord="4">automatic-bay</EnumVal>
+      <EnumVal ord="5">automatic-station</EnumVal>
+      <EnumVal ord="6">automatic-remote</EnumVal>
+      <EnumVal ord="7">maintenance</EnumVal>
+      <EnumVal ord="8">process</EnumVal>
+    </EnumType>
+    <EnumType id="Dbpos">
+      <EnumVal ord="0">intermediate</EnumVal>
+      <EnumVal ord="1">off</EnumVal>
+      <EnumVal ord="2">on</EnumVal>
+      <EnumVal ord="3">bad</EnumVal>
+    </EnumType>
+  </DataTypeTemplates>
+</SCL>

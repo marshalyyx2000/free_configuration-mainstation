@@ -97,10 +97,10 @@ endif()
 
 install(TARGETS sim_master_qt RUNTIME DESTINATION bin)
 
+# Always register the CLI install rule. EXISTS at configure time would skip
+# packing mms_master_cli.exe if cmake ran before the native CLI was built.
 set(MMS_CLI "${CMAKE_CURRENT_LIST_DIR}/../bin/mms_master_cli.exe")
-if(EXISTS "${MMS_CLI}")
-  install(FILES "${MMS_CLI}" DESTINATION bin)
-endif()
+install(FILES "${MMS_CLI}" DESTINATION bin OPTIONAL)
 
 set(IED_LIST "${CMAKE_CURRENT_LIST_DIR}/../out/IEDList.xml")
 if(EXISTS "${IED_LIST}")

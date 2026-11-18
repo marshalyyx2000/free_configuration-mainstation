@@ -4,7 +4,15 @@ project(mms_master_cli C)
 set(LIBIEC61850_ROOT "${CMAKE_CURRENT_LIST_DIR}/../third_party/libiec61850")
 set(LIBIEC61850_BUILD "${CMAKE_CURRENT_LIST_DIR}/../build-win")
 
-add_executable(mms_master_cli mms_master_cli.c ied_client_error.c)
+add_executable(mms_master_cli mms_master_cli.c ied_client_error.c comm_state_refs.c)
+
+add_executable(test_comm_state_refs comm_state_refs.c test_comm_state_refs.c)
+if(MSVC)
+  target_compile_options(mms_master_cli PRIVATE /utf-8)
+  target_compile_options(test_comm_state_refs PRIVATE /utf-8)
+  set_target_properties(test_comm_state_refs PROPERTIES
+    LINK_FLAGS "/SUBSYSTEM:CONSOLE")
+endif()
 
 target_include_directories(mms_master_cli PRIVATE
     "${LIBIEC61850_ROOT}/src/iec61850/inc"

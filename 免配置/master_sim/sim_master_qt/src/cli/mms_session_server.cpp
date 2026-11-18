@@ -504,7 +504,5 @@ bool MmsSessionServer::shouldSkipOffline(const QString& iedName) const
 
 QString MmsSessionServer::iedNameFromLd(const QString& ld)
 {
-    if (ld.endsWith(QStringLiteral("LD0")) && ld.size() > 3)
-        return ld.left(ld.size() - 3);
-    return ld;
+    return CommStateSupport::iedNameFromLd(ld);
 }

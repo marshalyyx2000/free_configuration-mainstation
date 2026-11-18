@@ -22,7 +22,7 @@ public:
         int mmsPort = 102;
         QString iedList;
         QString smcd;
-        bool preferSmcdFcda = false;
+        bool preferSmcdFcda = true;
     };
 
     explicit MmsSessionServer(const Options& opt, QObject* parent = nullptr);

@@ -5,11 +5,24 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import sys
 import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+
+_TOOLS = Path(__file__).resolve().parent / "sim_master_qt" / "tools"
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+from gen_substation_icd import (  # noqa: E402
+    DEFAULT_TEMPLATE,
+    copy_icd_to_out,
+    generate_icd,
+    merge_icd_datatypes,
+    parse_iedlist,
+    substation_ied_xml,
+)
 
 DEFAULT_SCD = Path(__file__).resolve().parents[1] / "子站scd" / "26579.SCD"
 OUT_DIR = Path(__file__).resolve().parent / "out"
@@ -170,35 +183,12 @@ def _resolve_lln0_ln_type(scd_path: Path) -> str:
 
 
 def _substation_ied_xml(devices: list[ConnectedDevice], lln0_ln_type: str) -> str:
-    """dsCommState 的 FCDA 必须是所有装置都有的对象。
-
-    SCD 里各型号装置的 LN 不同：`GOAlmGGIO1` 只有 13 台有，其余 17 台没有，
-    引用它会让 genconfig 产生不存在的条目（读出来是 error 10）。
-    30 台装置都有的公共点是 `LPHD1.Proxy.stVal`（BOOLEAN，fc=ST）——
-    保信子站用它表示装置通信状态，正好用来做通信工况。
-    """
-    fcda_lines = []
-    for dev in devices:
-        fcda_lines.append(
-            f'            <FCDA doName="Proxy" fc="ST" ldInst="{dev.ied_name}LD0" '
-            f'lnClass="LPHD" lnInst="1"/>'
-        )
-    fcda_block = "\n".join(fcda_lines)
-    return f"""  <IED configVersion="V1.00" desc="保信子站" manufacturer="master_sim" name="SubStation" type="virtual">
-    <AccessPoint desc="站控层" name="S1">
-      <Server timeout="30">
-        <Authentication/>
-        <LDevice desc="子站" inst="LD0">
-          <LN0 desc="管理逻辑节点" inst="" lnClass="LLN0" lnType="{lln0_ln_type}">
-            <DataSet desc="通信工况" name="dsCommState">
-{fcda_block}
-            </DataSet>
-          </LN0>
-        </LDevice>
-      </Server>
-    </AccessPoint>
-  </IED>
-"""
+    """dsCommState 用子站 LD0 上的 SDDI.ComStatus（保信标准），不是装置 LPHD.Proxy。"""
+    rows = [
+        {"no": i + 1, "ied_name": d.ied_name, "name": d.desc or d.ied_name}
+        for i, d in enumerate(devices)
+    ]
+    return substation_ied_xml(rows, lln0_ln_type)
 
 
 def _sanitize_scl_for_genconfig(text: str) -> str:
@@ -245,6 +235,9 @@ def inject_substation(scd_path: Path, dest_smcd: Path, devices: list[ConnectedDe
     if any(d.ip.startswith("10.100.100.") for d in devices):
         # 26579 NETB 11.100.100 与 NETA 同装置；SCDPro 只绑 10.100.100。
         text = text.replace("11.100.100.", "10.100.100.")
+    template = DEFAULT_TEMPLATE
+    if template.is_file():
+        text = merge_icd_datatypes(text, template.read_text(encoding="utf-8"))
     dest_smcd.write_text(text, encoding="utf-8")
 
 
@@ -264,6 +257,12 @@ def generate(scd_path: Path = DEFAULT_SCD, out_dir: Path = OUT_DIR) -> list[Conn
 
     ied_path = out_dir / "IEDList.xml"
     ied_path.write_text(build_ied_list_xml(devices), encoding="utf-8")
+
+    if DEFAULT_TEMPLATE.is_file():
+        icd_dest = Path(__file__).resolve().parent.parent / "SubStation_26579.icd"
+        generate_icd(DEFAULT_TEMPLATE, parse_iedlist(ied_path), icd_dest)
+        copy_icd_to_out(icd_dest, out_dir)
+        print(f"写入: {icd_dest}")
 
     smcd_path = out_dir / "station.SMCD"
     inject_substation(scd_path, smcd_path, devices)

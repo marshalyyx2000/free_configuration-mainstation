@@ -22,7 +22,9 @@ MmsClientBridge::MmsClientBridge(QObject* parent)
         || qEnvironmentVariable("SIMMASTER_SKIP_AUTO_COMM_STATE") == QLatin1String("1"))
         m_autoReadCommState = false;
     const QString prefer = qEnvironmentVariable("SIMMASTER_PREFER_SMCD_FCDA");
-    if (prefer == QLatin1String("1") || prefer.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
+    if (prefer == QLatin1String("0") || prefer.compare(QLatin1String("false"), Qt::CaseInsensitive) == 0)
+        m_preferSmcdFcda = false;
+    else if (prefer == QLatin1String("1") || prefer.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
         m_preferSmcdFcda = true;
     const QDir appDir(QCoreApplication::applicationDirPath());
     m_cliPath = appDir.absoluteFilePath(QStringLiteral("mms_master_cli.exe"));

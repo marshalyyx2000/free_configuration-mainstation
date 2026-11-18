@@ -64,6 +64,7 @@ $nsisRoot = ($pf64 -replace '\\', '/')
 $cmake = (Get-Command cmake).Source
 & $cmake -S $Root -B $BuildDir -G "Visual Studio 17 2022" -A x64 `
     "-DCMAKE_PREFIX_PATH=$($env:QT6_DIR)" "-DAPP_VERSION=$ver" `
+    "-DCPACK_PACKAGE_VERSION=$ver" `
     "-DSIMMASTER_CPACK_DIR=C:/Temp/SimMasterQt_cpack"
 & $cmake --build $BuildDir --config Release --target sim_master_qt
 
@@ -94,6 +95,7 @@ foreach ($name in @("IEDList.xml", "station.SMCD")) {
 $cliBuilt = Join-Path $MasterSim "bin\mms_master_cli.exe"
 Copy-Item -Force $cliBuilt (Join-Path $stage "bin\mms_master_cli.exe")
 Copy-Item -Force $builtExe (Join-Path $stage "bin\sim_master_qt.exe")
+Copy-Item -Force $cliBuilt (Join-Path $BuildDir "Release\mms_master_cli.exe")
 
 & $windeployqt --no-translations --no-compiler-runtime (Join-Path $stage "bin\sim_master_qt.exe")
 if ($LASTEXITCODE -ne 0) { throw "windeployqt failed" }
@@ -117,8 +119,29 @@ $ErrorActionPreference = "Continue"
 $cpackExit = $LASTEXITCODE
 $ErrorActionPreference = $prevEap
 Pop-Location
+
+function Install-PayloadBinaries([string]$Cli, [string]$Gui) {
+    $roots = @(
+        (Join-Path $Root "dist\_CPack_Packages\win64\NSIS"),
+        (Join-Path $env:SIMMASTER_CPACK_DIR "_CPack_Packages\win64\NSIS")
+    )
+    $copied = $false
+    foreach ($nsisRoot in $roots) {
+        if (-not (Test-Path $nsisRoot)) { continue }
+        Get-ChildItem $nsisRoot -Directory -Filter "SimMasterQt-*-win64" -ErrorAction SilentlyContinue | ForEach-Object {
+            $payBin = Join-Path $_.FullName "bin"
+            if (-not (Test-Path $payBin)) { return }
+            Copy-Item -Force $Cli (Join-Path $payBin "mms_master_cli.exe")
+            Copy-Item -Force $Gui (Join-Path $payBin "sim_master_qt.exe")
+            Write-Host "Ensured GUI+CLI in payload: $payBin"
+            $copied = $true
+        }
+    }
+    if (-not $copied) { Write-Warning "No NSIS payload bin found to inject mms_master_cli.exe" }
+}
+
+Install-PayloadBinaries -Cli $cliBuilt -Gui $builtExe
 if ($cpackExit -ne 0) {
-    # CPack wipes NSIS/ before writing project.nsi; include must sit beside project.nsi for makensis.
     $projectNsi = Join-Path $nsisPackDir "project.nsi"
     if (-not (Test-Path $projectNsi)) {
         $altNsis = Join-Path (Join-Path $Root "dist") "_CPack_Packages\win64\NSIS\project.nsi"
@@ -129,18 +152,7 @@ if ($cpackExit -ne 0) {
     }
     if (-not (Test-Path $projectNsi)) { throw "cpack failed and project.nsi missing" }
     Copy-Item -Force $nsisIncludeSrc (Join-Path $nsisPackDir "cpack_nsis_include.nsh")
-    $payloadRoots = @(
-        (Join-Path $Root "dist\_CPack_Packages\win64\NSIS\SimMasterQt-$ver-win64"),
-        (Join-Path $nsisPackDir "SimMasterQt-$ver-win64")
-    )
-    foreach ($pr in $payloadRoots) {
-        $payBin = Join-Path $pr "bin"
-        if (-not (Test-Path $payBin)) { continue }
-        Copy-Item -Force $cliBuilt (Join-Path $payBin "mms_master_cli.exe")
-        Copy-Item -Force $builtExe (Join-Path $payBin "sim_master_qt.exe")
-        Write-Host "Ensured mms_master_cli.exe in payload: $payBin"
-        break
-    }
+    Install-PayloadBinaries -Cli $cliBuilt -Gui $builtExe
     $makensis = "C:/Program Files (x86)/NSIS/makensis.exe"
     & $makensis $projectNsi
     if ($LASTEXITCODE -ne 0) { throw "cpack/makensis failed" }

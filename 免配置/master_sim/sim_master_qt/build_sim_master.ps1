@@ -80,4 +80,6 @@ if (-not (Test-Path $OutExe)) { throw "Build failed: $OutExe" }
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "dist") | Out-Null
 Copy-Item -Force $OutExe (Join-Path $Root "dist\sim_master_qt.exe")
 Copy-Item -Force $cli (Join-Path $Root "dist\mms_master_cli.exe")
+Copy-Item -Force $cli (Join-Path (Split-Path $OutExe) "mms_master_cli.exe")
 Write-Host "OK: $OutExe"
+Write-Host "CLI beside GUI: $(Join-Path (Split-Path $OutExe) 'mms_master_cli.exe')"

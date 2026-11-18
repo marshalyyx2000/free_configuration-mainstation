@@ -53,7 +53,7 @@ private:
     bool m_commStateBusy = false;
     bool m_signalsHooked = false;
     bool m_autoReadCommState = true;
-    bool m_preferSmcdFcda = false;
+    bool m_preferSmcdFcda = true;
     QByteArray m_readBuffer;
     QVector<QJsonObject> m_pending;
 };

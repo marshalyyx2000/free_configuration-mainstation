@@ -3,6 +3,12 @@
 
     set SUBST_PASS=...
     python ops/verify_link.py
+
+SimMasterQt 1.25+ 手工联调（MMS 仍连、单台保护离线）：
+  1. 连接 SubStation → 全站订阅。
+  2. MMS 页「工况轮询(秒)」建议 30；保持本脚本黑洞路由使目标 IED stVal=false。
+  3. 一轮轮询内：装置树该 IED 变红；面板 RCB 显示未订阅；日志有「通信分」「离线退订」。
+  4. 恢复路由后树变绿，但不会自动再订，需手动全站/单装置订阅。
 """
 from __future__ import annotations
 

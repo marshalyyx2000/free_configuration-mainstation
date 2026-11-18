@@ -162,6 +162,7 @@ bool ScdModelLoader::loadIedList(const QString& path)
         d.iedName = el.attribute(QStringLiteral("ied_name"));
         d.desc = el.attribute(QStringLiteral("name"));
         d.chPara = el.attribute(QStringLiteral("ch_para"));
+        d.chPara.replace(QStringLiteral("11.100.100."), QStringLiteral("10.100.100."));
         d.rptno = el.attribute(QStringLiteral("rptno"), QStringLiteral("9"));
         d.wavePath = el.attribute(QStringLiteral("wave_path"), QStringLiteral("/COMTRADE/"));
         if (!d.iedName.isEmpty())

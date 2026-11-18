@@ -1,10 +1,13 @@
 #include "ops/config_generator.h"
 #include "ops/station_zip_writer.h"
+#include "util/app_paths.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QXmlStreamReader>
 
 #include <QHash>
@@ -15,6 +18,8 @@
 #include <stdexcept>
 
 namespace {
+
+void writeBinaryFileReplace(const QString& path, const QByteArray& data);
 
 QString localTag(const QString& name)
 {
@@ -195,14 +200,68 @@ QString resolveLln0LnType(const QString& scdPath)
     return best;
 }
 
+QString xmlEsc(const QString& s)
+{
+    QString o = s;
+    o.replace(QLatin1Char('&'), QStringLiteral("&amp;"));
+    o.replace(QLatin1Char('<'), QStringLiteral("&lt;"));
+    o.replace(QLatin1Char('>'), QStringLiteral("&gt;"));
+    o.replace(QLatin1Char('"'), QStringLiteral("&quot;"));
+    return o;
+}
+
+QString commStatusDu(const QString& desc)
+{
+    const QString d = desc.trimmed().isEmpty() ? QStringLiteral("装置") : desc.trimmed();
+    if (d.contains(QStringLiteral("通信状态")))
+        return d;
+    return d + QStringLiteral("通信状态");
+}
+
+QString sddiLnXml(const QString& prefix, int inst, const QString& desc)
+{
+    const QString du = xmlEsc(commStatusDu(desc));
+    return QStringLiteral(
+        "          <LN desc=\"状态监视信息\" prefix=\"%1\" inst=\"%2\" lnClass=\"SDDI\" lnType=\"SUBSTATION_SDDI_V2.00\">\n"
+        "            <DOI name=\"Mod\" desc=\"Mode\">\n"
+        "              <DAI name=\"stVal\"><Val>on</Val></DAI>\n"
+        "              <DAI name=\"ctlModel\"><Val>status-only</Val></DAI>\n"
+        "            </DOI>\n"
+        "            <DOI name=\"Beh\" desc=\"Behaviour\">\n"
+        "              <DAI name=\"stVal\"><Val>on</Val></DAI>\n"
+        "            </DOI>\n"
+        "            <DOI name=\"Health\" desc=\"Health\">\n"
+        "              <DAI name=\"stVal\"><Val>Ok</Val></DAI>\n"
+        "            </DOI>\n"
+        "            <DOI name=\"NamPlt\" desc=\"Name Plate\">\n"
+        "              <DAI name=\"vendor\"><Val>NR</Val></DAI>\n"
+        "              <DAI name=\"swRev\"><Val>R1.00</Val></DAI>\n"
+        "              <DAI name=\"d\"><Val>Name Plate</Val></DAI>\n"
+        "              <DAI name=\"dU\"><Val>Name Plate</Val></DAI>\n"
+        "              <DAI name=\"lnNs\"><Val>NR PCS979X:2015</Val></DAI>\n"
+        "            </DOI>\n"
+        "            <DOI desc=\"%3\" name=\"ComStatus\">\n"
+        "              <DAI name=\"stVal\"/>\n"
+        "              <DAI name=\"dU\"><Val>%3</Val></DAI>\n"
+        "              <DAI name=\"dataNs\"><Val>NR PCS979X:2015</Val></DAI>\n"
+        "            </DOI>\n"
+        "          </LN>\n")
+        .arg(xmlEsc(prefix), QString::number(inst), du);
+}
+
 QString substationIedXml(const QVector<ConnectedDeviceEntry>& devices, const QString& lln0LnType)
 {
     QStringList fcdaLines;
+    QStringList lnLines;
+    int no = 1;
     for (const ConnectedDeviceEntry& dev : devices) {
-        fcdaLines << QStringLiteral("            <FCDA doName=\"Proxy\" fc=\"ST\" ldInst=\"%1LD0\" lnClass=\"LPHD\" lnInst=\"1\"/>")
-                         .arg(dev.iedName);
+        fcdaLines << QStringLiteral(
+                         "            <FCDA doName=\"ComStatus\" fc=\"ST\" ldInst=\"LD0\" lnClass=\"SDDI\" lnInst=\"%1\" prefix=\"%2\"/>")
+                         .arg(no)
+                         .arg(xmlEsc(dev.iedName));
+        lnLines << sddiLnXml(dev.iedName, no, dev.desc);
+        ++no;
     }
-    const QString fcdaBlock = fcdaLines.join(QLatin1Char('\n'));
     return QStringLiteral(
         "  <IED configVersion=\"V1.00\" desc=\"保信子站\" manufacturer=\"master_sim\" name=\"SubStation\" type=\"virtual\">\n"
         "    <AccessPoint desc=\"站控层\" name=\"S1\">\n"
@@ -213,12 +272,155 @@ QString substationIedXml(const QVector<ConnectedDeviceEntry>& devices, const QSt
         "            <DataSet desc=\"通信工况\" name=\"dsCommState\">\n"
         "%1\n"
         "            </DataSet>\n"
+        "            <ReportControl name=\"brcbCommState\" datSet=\"dsCommState\" intgPd=\"0\" rptID=\"LD0/LLN0$BR$brcbCommState\" confRev=\"1\" buffered=\"true\" bufTime=\"0\">\n"
+        "              <TrgOps dchg=\"true\" qchg=\"false\" dupd=\"false\" period=\"true\"/>\n"
+        "              <OptFields seqNum=\"false\" timeStamp=\"true\" dataSet=\"true\" reasonCode=\"true\" dataRef=\"true\" entryID=\"true\" configRef=\"true\"/>\n"
+        "              <RptEnabled max=\"1\"/>\n"
+        "            </ReportControl>\n"
         "          </LN0>\n"
+        "%3"
         "        </LDevice>\n"
         "      </Server>\n"
         "    </AccessPoint>\n"
         "  </IED>\n")
-        .arg(fcdaBlock, lln0LnType);
+        .arg(fcdaLines.join(QLatin1Char('\n')), xmlEsc(lln0LnType), lnLines.join(QString()));
+}
+
+QString findSubstationIcdTemplate(const QString& scdPath)
+{
+    QStringList cands;
+    if (!scdPath.isEmpty())
+        cands << QDir(QFileInfo(scdPath).absolutePath()).absoluteFilePath(QStringLiteral("../SubStation.icd"));
+    const QString root = AppPaths::masterSimRoot();
+    if (!root.isEmpty())
+        cands << QDir(root).absoluteFilePath(QStringLiteral("../SubStation.icd"));
+    cands << QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(
+        QStringLiteral("../share/sim_master_qt/SubStation.icd"));
+    for (const QString& p : cands) {
+        if (QFileInfo::exists(p))
+            return QFileInfo(p).absoluteFilePath();
+    }
+    return {};
+}
+
+QString replaceSddiLns(QString text, const QVector<ConnectedDeviceEntry>& devices)
+{
+    QRegularExpression re(QStringLiteral(R"(<LN\b[^>]*\blnClass="SDDI")"));
+    QRegularExpressionMatchIterator it = re.globalMatch(text);
+    int first = -1;
+    int lastStart = -1;
+    while (it.hasNext()) {
+        const QRegularExpressionMatch m = it.next();
+        if (first < 0)
+            first = m.capturedStart();
+        lastStart = m.capturedStart();
+    }
+    if (first < 0)
+        throw std::runtime_error("SubStation.icd 模板中没有 SDDI LN");
+    const int ldClose = text.indexOf(QStringLiteral("</LDevice>"), lastStart);
+    if (ldClose < 0)
+        throw std::runtime_error("SubStation.icd 找不到 </LDevice>");
+    const int lastLn = text.lastIndexOf(QStringLiteral("</LN>"), ldClose);
+    if (lastLn < first)
+        throw std::runtime_error("SubStation.icd 找不到 SDDI </LN>");
+    QString block;
+    int no = 1;
+    for (const ConnectedDeviceEntry& dev : devices)
+        block += sddiLnXml(dev.iedName, no++, dev.desc);
+    text.replace(first, lastLn + int(strlen("</LN>")) - first, block);
+    return text;
+}
+
+void writeSubstationIcd(const QString& templatePath, const QVector<ConnectedDeviceEntry>& devices,
+    const QString& destPath)
+{
+    QFile in(templatePath);
+    if (!in.open(QIODevice::ReadOnly | QIODevice::Text))
+        throw std::runtime_error(
+            QStringLiteral("无法读取 SubStation.icd 模板: %1").arg(templatePath).toUtf8().constData());
+    QString text = QString::fromUtf8(in.readAll());
+    in.close();
+    text.replace(QStringLiteral("iedName=\"TEMPLATE\""), QStringLiteral("iedName=\"SubStation\""));
+    text.replace(QStringLiteral("IED name=\"TEMPLATE\""), QStringLiteral("IED name=\"SubStation\""));
+    text.replace(QStringLiteral("id=\"template\""), QStringLiteral("id=\"26579\""));
+    text = replaceSddiLns(text, devices);
+
+    QStringList fcdaLines;
+    int no = 1;
+    for (const ConnectedDeviceEntry& dev : devices) {
+        fcdaLines << QStringLiteral(
+                         "              <FCDA doName=\"ComStatus\" fc=\"ST\" ldInst=\"LD0\" lnClass=\"SDDI\" lnInst=\"%1\" prefix=\"%2\" />")
+                         .arg(no++)
+                         .arg(xmlEsc(dev.iedName));
+    }
+    const QRegularExpression dsRe(
+        QStringLiteral(R"(<DataSet\b[^>]*\bname="dsCommState"[^>]*>.*?</DataSet>)"),
+        QRegularExpression::DotMatchesEverythingOption);
+    const QRegularExpressionMatch ds = dsRe.match(text);
+    if (!ds.hasMatch())
+        throw std::runtime_error("SubStation.icd 模板中没有 dsCommState");
+    const QString open = ds.captured().left(ds.captured().indexOf(QLatin1Char('>')) + 1);
+    const QString rebuilt = open + QLatin1Char('\n') + fcdaLines.join(QLatin1Char('\n'))
+        + QStringLiteral("\n            </DataSet>");
+    text.replace(ds.capturedStart(), ds.capturedLength(), rebuilt);
+
+    QDir().mkpath(QFileInfo(destPath).absolutePath());
+    writeBinaryFileReplace(destPath, text.toUtf8());
+}
+
+QByteArray mergeIcdDataTypes(QByteArray smcd, const QByteArray& icd)
+{
+    const int icdDt = icd.indexOf("<DataTypeTemplates");
+    if (icdDt < 0)
+        return smcd;
+    const int icdInner = icd.indexOf('>', icdDt);
+    const int icdEnd = icd.indexOf("</DataTypeTemplates>", icdInner);
+    if (icdInner < 0 || icdEnd < 0)
+        return smcd;
+    const QByteArray types = icd.mid(icdInner + 1, icdEnd - (icdInner + 1));
+    const char* tags[] = {"LNodeType", "DOType", "DAType", "EnumType", nullptr};
+    QByteArray insert;
+    int pos = 0;
+    while (pos < types.size()) {
+        int next = -1;
+        const char* found = nullptr;
+        for (int t = 0; tags[t]; ++t) {
+            const QByteArray open = QByteArray("<") + tags[t];
+            const int p = types.indexOf(open, pos);
+            if (p >= 0 && (next < 0 || p < next)) {
+                next = p;
+                found = tags[t];
+            }
+        }
+        if (next < 0 || !found)
+            break;
+        const int idPos = types.indexOf("id=\"", next);
+        const QByteArray close = QByteArray("</") + found + ">";
+        const int closePos = types.indexOf(close, next);
+        if (idPos < 0 || closePos < 0)
+            break;
+        const int idStart = idPos + 4;
+        const int idEnd = types.indexOf('"', idStart);
+        if (idEnd < 0 || idEnd > closePos)
+            break;
+        const QByteArray id = types.mid(idStart, idEnd - idStart);
+        const int blockEnd = closePos + close.size();
+        const QByteArray needle = QByteArray("id=\"") + id + "\"";
+        if (smcd.indexOf(needle) < 0) {
+            insert.append(types.mid(next, blockEnd - next));
+            insert.append('\n');
+        }
+        pos = blockEnd;
+    }
+    if (insert.isEmpty())
+        return smcd;
+    const int smcdEnd = smcd.indexOf("</DataTypeTemplates>");
+    if (smcdEnd >= 0)
+        return smcd.insert(smcdEnd, insert);
+    smcd.append("\n  <DataTypeTemplates>\n");
+    smcd.append(insert);
+    smcd.append("  </DataTypeTemplates>\n");
+    return smcd;
 }
 
 QByteArray clampRptEnabledMax(QByteArray data)
@@ -336,6 +538,13 @@ void injectSubstation(const QString& scdPath, const QString& destSmcd, const QVe
         throw std::runtime_error("SCD 中未找到 <IED>，无法插入 SubStation");
     data.insert(pos, substationIedXml(devices, lln0LnType).toUtf8());
 
+    const QString icdTemplate = findSubstationIcdTemplate(scdPath);
+    if (!icdTemplate.isEmpty()) {
+        QFile icdFile(icdTemplate);
+        if (icdFile.open(QIODevice::ReadOnly))
+            data = mergeIcdDataTypes(data, icdFile.readAll());
+    }
+
     QByteArray out = sanitizeSclForGenconfig(data);
     bool labScdPro = false;
     for (const ConnectedDeviceEntry& d : devices) {
@@ -424,6 +633,18 @@ QVector<ConnectedDeviceEntry> ConfigGenerator::generate(const QString& scdPath, 
         throw std::runtime_error("无法写入 IEDList.xml");
     iedFile.write(buildIedListXml(devices).toUtf8());
     iedFile.close();
+
+    const QString icdTemplate = findSubstationIcdTemplate(scdPath);
+    if (!icdTemplate.isEmpty()) {
+        const QString icdName = QStringLiteral("SubStation_26579.icd");
+        const QString icdOut = QDir(outDirPath).absoluteFilePath(icdName);
+        writeSubstationIcd(icdTemplate, devices, icdOut);
+        const QString icdBeside = QDir(QFileInfo(icdTemplate).absolutePath()).absoluteFilePath(icdName);
+        if (QFileInfo(icdBeside).absoluteFilePath() != QFileInfo(icdOut).absoluteFilePath()) {
+            QFile::remove(icdBeside);
+            QFile::copy(icdOut, icdBeside);
+        }
+    }
 
     const QString lln0LnType = resolveLln0LnType(scdPath);
     const QString smcdPath = QDir(outDirPath).absoluteFilePath(QStringLiteral("station.SMCD"));
