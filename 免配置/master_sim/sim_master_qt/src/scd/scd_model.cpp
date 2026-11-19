@@ -2,6 +2,7 @@
 
 #include <QDomDocument>
 #include <QFile>
+#include <QPair>
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
@@ -188,6 +189,275 @@ void ScdModelLoader::rebuildModelIndex()
         m_modelByIed.insert(m_models.at(i).iedName, i);
 }
 
+struct SclBda {
+    QString name;
+    QString bType;
+    QString typeId;
+};
+
+struct SclDa {
+    QString name;
+    QString fc;
+    QString bType;
+    QString typeId;
+};
+
+struct SclTypes {
+    QHash<QString, QHash<QString, QString>> lnDo;
+    QHash<QString, QVector<QPair<QString, QString>>> doSdo;
+    QHash<QString, QVector<SclDa>> doDa;
+    QHash<QString, QVector<SclBda>> daBda;
+};
+
+static QString specText(const QString& name, const QString& bType, const QString& typeId, const SclTypes& types, int depth)
+{
+    const bool isStruct = bType.compare(QLatin1String("Struct"), Qt::CaseInsensitive) == 0;
+    if (!isStruct || depth >= 4 || typeId.isEmpty() || !types.daBda.contains(typeId))
+        return name;
+    QStringList kids;
+    const QVector<SclBda> bdas = types.daBda.value(typeId);
+    kids.reserve(bdas.size());
+    for (const SclBda& bda : bdas)
+        kids.append(specText(bda.name, bda.bType, bda.typeId, types, depth + 1));
+    if (kids.isEmpty())
+        return name;
+    return name + QLatin1Char('{') + kids.join(QLatin1Char(',')) + QLatin1Char('}');
+}
+
+static SclTypes indexSclTypes(const QDomElement& root)
+{
+    SclTypes types;
+    QDomElement templates;
+    const QDomNodeList templateNodes = root.elementsByTagName(QStringLiteral("DataTypeTemplates"));
+    if (!templateNodes.isEmpty())
+        templates = templateNodes.at(0).toElement();
+    if (templates.isNull())
+        return types;
+
+    const QDomNodeList lns = templates.elementsByTagName(QStringLiteral("LNodeType"));
+    for (int i = 0; i < lns.count(); ++i) {
+        const QDomElement ln = lns.at(i).toElement();
+        const QString id = ln.attribute(QStringLiteral("id"));
+        if (id.isEmpty())
+            continue;
+        QHash<QString, QString> dos;
+        for (QDomNode ch = ln.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
+            if (!ch.isElement())
+                continue;
+            const QDomElement el = ch.toElement();
+            if (localTag(el.tagName()) != QStringLiteral("DO"))
+                continue;
+            const QString name = el.attribute(QStringLiteral("name"));
+            const QString typeId = el.attribute(QStringLiteral("type"));
+            if (!name.isEmpty() && !typeId.isEmpty())
+                dos.insert(name, typeId);
+        }
+        if (!dos.isEmpty())
+            types.lnDo.insert(id, dos);
+    }
+
+    const QDomNodeList doTypes = templates.elementsByTagName(QStringLiteral("DOType"));
+    for (int i = 0; i < doTypes.count(); ++i) {
+        const QDomElement dt = doTypes.at(i).toElement();
+        const QString id = dt.attribute(QStringLiteral("id"));
+        if (id.isEmpty())
+            continue;
+        QVector<SclDa> das;
+        QVector<QPair<QString, QString>> sdos;
+        for (QDomNode ch = dt.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
+            if (!ch.isElement())
+                continue;
+            const QDomElement el = ch.toElement();
+            const QString tag = localTag(el.tagName());
+            if (tag == QStringLiteral("DA")) {
+                SclDa da;
+                da.name = el.attribute(QStringLiteral("name"));
+                da.fc = el.attribute(QStringLiteral("fc"));
+                da.bType = el.attribute(QStringLiteral("bType"));
+                da.typeId = el.attribute(QStringLiteral("type"));
+                if (!da.name.isEmpty())
+                    das.append(da);
+            } else if (tag == QStringLiteral("SDO")) {
+                const QString name = el.attribute(QStringLiteral("name"));
+                const QString typeId = el.attribute(QStringLiteral("type"));
+                if (!name.isEmpty() && !typeId.isEmpty())
+                    sdos.append(qMakePair(name, typeId));
+            }
+        }
+        if (!das.isEmpty())
+            types.doDa.insert(id, das);
+        if (!sdos.isEmpty())
+            types.doSdo.insert(id, sdos);
+    }
+
+    const QDomNodeList daTypes = templates.elementsByTagName(QStringLiteral("DAType"));
+    for (int i = 0; i < daTypes.count(); ++i) {
+        const QDomElement dt = daTypes.at(i).toElement();
+        const QString id = dt.attribute(QStringLiteral("id"));
+        if (id.isEmpty())
+            continue;
+        QVector<SclBda> bdas;
+        for (QDomNode ch = dt.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
+            if (!ch.isElement())
+                continue;
+            const QDomElement el = ch.toElement();
+            if (localTag(el.tagName()) != QStringLiteral("BDA"))
+                continue;
+            SclBda bda;
+            bda.name = el.attribute(QStringLiteral("name"));
+            bda.bType = el.attribute(QStringLiteral("bType"));
+            bda.typeId = el.attribute(QStringLiteral("type"));
+            if (!bda.name.isEmpty())
+                bdas.append(bda);
+        }
+        if (!bdas.isEmpty())
+            types.daBda.insert(id, bdas);
+    }
+    return types;
+}
+
+static bool lnAttrsMatch(const QDomElement& ln, const QString& prefix, const QString& lnClass, const QString& lnInst)
+{
+    const QString tag = localTag(ln.tagName());
+    if (tag != QStringLiteral("LN0") && tag != QStringLiteral("LN"))
+        return false;
+    QString elClass = ln.attribute(QStringLiteral("lnClass"));
+    if (elClass.isEmpty() && tag == QStringLiteral("LN0"))
+        elClass = QStringLiteral("LLN0");
+    return ln.attribute(QStringLiteral("prefix")) == prefix && ln.attribute(QStringLiteral("inst")) == lnInst
+        && elClass == lnClass;
+}
+
+static QDomElement ldeviceForFcda(const QDomElement& fcda)
+{
+    const QString ldInst = fcda.attribute(QStringLiteral("ldInst"), QStringLiteral("LD0"));
+    for (QDomNode n = fcda.parentNode(); !n.isNull(); n = n.parentNode()) {
+        if (!n.isElement() || localTag(n.toElement().tagName()) != QStringLiteral("LDevice"))
+            continue;
+        const QDomElement ld = n.toElement();
+        if (ld.attribute(QStringLiteral("inst"), QStringLiteral("LD0")) == ldInst)
+            return ld;
+        break;
+    }
+    QDomElement ied;
+    for (QDomNode n = fcda.parentNode(); !n.isNull(); n = n.parentNode()) {
+        if (n.isElement() && localTag(n.toElement().tagName()) == QStringLiteral("IED")) {
+            ied = n.toElement();
+            break;
+        }
+    }
+    if (ied.isNull())
+        return {};
+    const QDomNodeList lds = ied.elementsByTagName(QStringLiteral("LDevice"));
+    for (int i = 0; i < lds.count(); ++i) {
+        const QDomElement ld = lds.at(i).toElement();
+        if (ld.attribute(QStringLiteral("inst"), QStringLiteral("LD0")) == ldInst)
+            return ld;
+    }
+    return {};
+}
+
+static QString lnTypeForFcda(const QDomElement& fcda)
+{
+    const QDomElement ld = ldeviceForFcda(fcda);
+    if (ld.isNull())
+        return {};
+    const QString prefix = fcda.attribute(QStringLiteral("prefix"));
+    const QString lnClass = fcda.attribute(QStringLiteral("lnClass"));
+    const QString lnInst = fcda.attribute(QStringLiteral("lnInst"));
+    for (QDomNode ch = ld.firstChild(); !ch.isNull(); ch = ch.nextSibling()) {
+        if (!ch.isElement())
+            continue;
+        const QDomElement ln = ch.toElement();
+        if (lnAttrsMatch(ln, prefix, lnClass, lnInst))
+            return ln.attribute(QStringLiteral("lnType"));
+    }
+    return {};
+}
+
+static QString doTypeForPath(const SclTypes& types, const QString& lnType, const QString& doName)
+{
+    const QStringList segs = doName.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+    if (segs.isEmpty() || lnType.isEmpty())
+        return {};
+    QString doType = types.lnDo.value(lnType).value(segs.at(0));
+    for (int i = 1; i < segs.size() && !doType.isEmpty(); ++i) {
+        QString next;
+        const QVector<QPair<QString, QString>> sdos = types.doSdo.value(doType);
+        for (const QPair<QString, QString>& sdo : sdos) {
+            if (sdo.first == segs.at(i)) {
+                next = sdo.second;
+                break;
+            }
+        }
+        doType = next;
+    }
+    return doType;
+}
+
+static QStringList membersForDaName(const SclTypes& types, const QVector<SclDa>& das, const QString& daName)
+{
+    const QStringList path = daName.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+    if (path.isEmpty())
+        return {};
+    const SclDa* found = nullptr;
+    for (const SclDa& da : das) {
+        if (da.name == path.at(0)) {
+            found = &da;
+            break;
+        }
+    }
+    if (!found)
+        return { daName };
+    if (path.size() == 1)
+        return { specText(found->name, found->bType, found->typeId, types, 0) };
+
+    QString bType = found->bType;
+    QString typeId = found->typeId;
+    QString prefix = found->name;
+    for (int i = 1; i < path.size(); ++i) {
+        if (bType.compare(QLatin1String("Struct"), Qt::CaseInsensitive) != 0)
+            return { daName };
+        const QVector<SclBda> bdas = types.daBda.value(typeId);
+        bool hit = false;
+        for (const SclBda& bda : bdas) {
+            if (bda.name != path.at(i))
+                continue;
+            prefix += QLatin1Char('.') + bda.name;
+            bType = bda.bType;
+            typeId = bda.typeId;
+            hit = true;
+            if (i + 1 == path.size())
+                return { specText(prefix, bType, typeId, types, 0) };
+            break;
+        }
+        if (!hit)
+            return { daName };
+    }
+    return { daName };
+}
+
+static QStringList fcdaValueMembers(const SclTypes& types, const QDomElement& fcda)
+{
+    if (types.lnDo.isEmpty())
+        return {};
+    const QString lnType = lnTypeForFcda(fcda);
+    const QString doType = doTypeForPath(types, lnType, fcda.attribute(QStringLiteral("doName")));
+    if (doType.isEmpty())
+        return {};
+    const QVector<SclDa> das = types.doDa.value(doType);
+    const QString daName = fcda.attribute(QStringLiteral("daName"));
+    if (!daName.isEmpty())
+        return membersForDaName(types, das, daName);
+    const QString fc = fcda.attribute(QStringLiteral("fc"));
+    QStringList out;
+    for (const SclDa& da : das) {
+        if (fc.isEmpty() || da.fc.compare(fc, Qt::CaseInsensitive) == 0)
+            out.append(specText(da.name, da.bType, da.typeId, types, 0));
+    }
+    return out;
+}
+
 QVector<IedModel> ScdModelLoader::parseModelsFromSmcd(const QString& path, bool uiFast)
 {
     QVector<IedModel> out;
@@ -198,6 +468,7 @@ QVector<IedModel> ScdModelLoader::parseModelsFromSmcd(const QString& path, bool 
     if (!doc.setContent(&file))
         return out;
     const QDomElement root = doc.documentElement();
+    const SclTypes sclTypes = indexSclTypes(root);
     const QDomNodeList ieds = root.elementsByTagName(QStringLiteral("IED"));
     out.reserve(ieds.count());
     for (int i = 0; i < ieds.count(); ++i) {
@@ -240,6 +511,7 @@ QVector<IedModel> ScdModelLoader::parseModelsFromSmcd(const QString& path, bool 
                         DataSetMember member;
                         member.doiKey = fcdaDoiKey(fcdaEl);
                         member.address = fcdaMmsAddress(name, fcdaEl);
+                        member.valueMembers = fcdaValueMembers(sclTypes, fcdaEl);
                         member.desc = fcdaDescFromMap(doiDesc, fcdaEl);
                         if (member.desc.isEmpty())
                             member.desc = member.address;

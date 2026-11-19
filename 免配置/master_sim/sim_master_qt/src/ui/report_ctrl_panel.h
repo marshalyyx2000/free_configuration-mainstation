@@ -71,7 +71,7 @@ private:
     void finishBulkRead();
     void onBulkStepDone(bool stopAfter = false);
     void scheduleBulkNext(bool stopAfter = false);
-    static QString jsonValueText(const QJsonValue& v);
+    static QString jsonValueText(const QJsonValue& v, const QStringList& members = {});
 
     ReportPanelType m_type;
     MmsClientBridge* m_mms = nullptr;

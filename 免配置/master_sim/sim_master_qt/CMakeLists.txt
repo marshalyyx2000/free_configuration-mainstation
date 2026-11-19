@@ -108,6 +108,18 @@ if(MSVC)
   target_compile_options(test_event_format PRIVATE /utf-8)
 endif()
 
+add_executable(test_fcda_members
+    tests/test_fcda_members.cpp
+    src/scd/scd_model.cpp
+)
+target_include_directories(test_fcda_members PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(test_fcda_members PRIVATE Qt6::Core Qt6::Xml Qt6::Test)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../out/station.SMCD" SIM_STATION_SMCD_PATH)
+target_compile_definitions(test_fcda_members PRIVATE "SIM_STATION_SMCD=\"${SIM_STATION_SMCD_PATH}\"")
+if(MSVC)
+  target_compile_options(test_fcda_members PRIVATE /utf-8)
+endif()
+
 # Always register the CLI install rule. EXISTS at configure time would skip
 # packing mms_master_cli.exe if cmake ran before the native CLI was built.
 set(MMS_CLI "${CMAKE_CURRENT_LIST_DIR}/../bin/mms_master_cli.exe")

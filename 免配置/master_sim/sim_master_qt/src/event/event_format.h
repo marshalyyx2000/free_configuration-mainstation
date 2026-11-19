@@ -5,8 +5,11 @@
 
 #include <QJsonValue>
 #include <QString>
+#include <QStringList>
 
 QString formatReportValue(const QJsonValue& v);
+/** 按参引成员名展开。members 为空时仍保留数组里的每一项，不再只留 stVal。 */
+QString formatReportMembers(const QJsonValue& v, const QStringList& members);
 QString formatReportReason(int reasonCode);
 QString stationEventDetailText(const StationEvent& ev);
 

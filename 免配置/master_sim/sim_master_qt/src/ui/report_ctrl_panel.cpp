@@ -21,9 +21,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
-QString ReportCtrlPanel::jsonValueText(const QJsonValue& v)
+QString ReportCtrlPanel::jsonValueText(const QJsonValue& v, const QStringList& members)
 {
-    return formatReportValue(v);
+    return formatReportMembers(v, members);
 }
 
 ReportCtrlPanel::ReportCtrlPanel(ReportPanelType type, MmsClientBridge* mms, QWidget* parent)
@@ -641,9 +641,7 @@ void ReportCtrlPanel::fillLowerFromJson(const QJsonObject& evt)
     for (int i = 0; i < members.size(); ++i) {
         const QJsonObject m = members[i].toObject();
         const QString name = m.value(QStringLiteral("name")).toString();
-        const QString val = jsonValueText(m.value(QStringLiteral("value")));
-        if (val.isEmpty() && m.value(QStringLiteral("value")).isNull())
-            continue;
+        const QJsonValue raw = m.value(QStringLiteral("value"));
         int rowIdx = findRowIndex(name);
         if (rowIdx < 0) {
             int idx = m.contains(QStringLiteral("idx")) ? m.value(QStringLiteral("idx")).toInt(-1) : i;
@@ -658,6 +656,12 @@ void ReportCtrlPanel::fillLowerFromJson(const QJsonObject& evt)
                 rowIdx = i;
         }
         if (rowIdx < 0)
+            continue;
+        QStringList mems;
+        if (ds && rowIdx < ds->members.size())
+            mems = ds->members.at(rowIdx).valueMembers;
+        const QString val = jsonValueText(raw, mems);
+        if (val.isEmpty() && raw.isNull())
             continue;
         if (rowIdx >= m_lower->rowCount()) {
             if (ds && rowIdx >= ds->members.size())

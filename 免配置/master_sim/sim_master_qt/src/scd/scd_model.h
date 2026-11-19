@@ -3,6 +3,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 #include <QVector>
 
 #include <QtGlobal>
@@ -33,6 +34,8 @@ struct DataSetMember {
     QString address;
     /** DOI 查找键（FCDA 属性），流式补全描述用。 */
     QString doiKey;
+    /** 该参引在 FC 下实际包含的数据属性，顺序与装置结构一致。结构写成 mag{f,i}。 */
+    QStringList valueMembers;
 };
 
 struct DataSetEntry {

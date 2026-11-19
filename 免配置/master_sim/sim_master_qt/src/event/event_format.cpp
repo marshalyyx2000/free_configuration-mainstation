@@ -3,8 +3,17 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSet>
+#include <QVector>
 
-QString formatReportValue(const QJsonValue& v)
+namespace {
+
+struct MemberSpec {
+    QString name;
+    QVector<MemberSpec> children;
+};
+
+QString scalarText(const QJsonValue& v)
 {
     if (v.isBool())
         return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
@@ -17,32 +26,135 @@ QString formatReportValue(const QJsonValue& v)
         if (arr.isEmpty())
             return QString();
         if (arr.size() == 1)
-            return formatReportValue(arr.at(0));
-        /* 数据集读值和总召唤上送的 CDC 通常是 [数据值, 品质, 时标]。表格里只填数据值。 */
-        if (arr.size() <= 4) {
-            const QString head = formatReportValue(arr.at(0));
-            if (!head.isEmpty())
-                return head;
-        }
+            return scalarText(arr.at(0));
         QStringList parts;
         parts.reserve(arr.size());
         for (const QJsonValue& el : arr)
-            parts.append(formatReportValue(el));
+            parts.append(scalarText(el));
         return parts.join(QStringLiteral(" | "));
     }
     if (v.isObject()) {
         const QJsonObject o = v.toObject();
-        const QString keys[] = {
-            QStringLiteral("stVal"), QStringLiteral("mag"), QStringLiteral("instMag"),
-            QStringLiteral("setVal"), QStringLiteral("setMag"), QStringLiteral("general"),
-            QStringLiteral("f"), QStringLiteral("i"),
-        };
-        for (const QString& key : keys) {
-            if (o.contains(key))
-                return formatReportValue(o.value(key));
-        }
+        QStringList parts;
+        parts.reserve(o.size());
+        for (auto it = o.constBegin(); it != o.constEnd(); ++it)
+            parts.append(it.key() + QLatin1Char('=') + scalarText(it.value()));
+        return parts.join(QLatin1Char(' '));
     }
+    if (v.isNull() || v.isUndefined())
+        return QString();
     return v.toVariant().toString();
+}
+
+MemberSpec parseSpecAt(const QString& text, int& i)
+{
+    MemberSpec spec;
+    while (i < text.size()) {
+        const QChar ch = text.at(i);
+        if (!(ch.isLetterOrNumber() || ch == QLatin1Char('_') || ch == QLatin1Char('.')))
+            break;
+        spec.name.append(ch);
+        ++i;
+    }
+    if (i < text.size() && text.at(i) == QLatin1Char('{')) {
+        ++i;
+        while (i < text.size() && text.at(i) != QLatin1Char('}')) {
+            if (text.at(i) == QLatin1Char(',')) {
+                ++i;
+                continue;
+            }
+            spec.children.append(parseSpecAt(text, i));
+        }
+        if (i < text.size() && text.at(i) == QLatin1Char('}'))
+            ++i;
+    }
+    return spec;
+}
+
+QString formatWithSpec(const QJsonValue& v, const MemberSpec& spec)
+{
+    if (spec.children.isEmpty()) {
+        const QString text = scalarText(v);
+        if (spec.name.isEmpty())
+            return text;
+        return spec.name + QLatin1Char('=') + text;
+    }
+    QStringList parts;
+    if (v.isArray()) {
+        const QJsonArray arr = v.toArray();
+        const int n = qMin(arr.size(), spec.children.size());
+        for (int i = 0; i < n; ++i)
+            parts.append(formatWithSpec(arr.at(i), spec.children.at(i)));
+        for (int i = n; i < arr.size(); ++i)
+            parts.append(scalarText(arr.at(i)));
+    } else if (v.isObject()) {
+        const QJsonObject o = v.toObject();
+        for (const MemberSpec& child : spec.children) {
+            if (o.contains(child.name))
+                parts.append(formatWithSpec(o.value(child.name), child));
+        }
+    } else {
+        return spec.name + QLatin1Char('=') + scalarText(v);
+    }
+    if (parts.isEmpty())
+        return spec.name + QLatin1Char('=') + scalarText(v);
+    if (spec.name.isEmpty())
+        return parts.join(QLatin1Char(' '));
+    return spec.name + QLatin1String("={") + parts.join(QLatin1Char(' ')) + QLatin1Char('}');
+}
+
+} // namespace
+
+QString formatReportMembers(const QJsonValue& v, const QStringList& members)
+{
+    if (members.isEmpty())
+        return scalarText(v);
+    QVector<MemberSpec> specs;
+    specs.reserve(members.size());
+    for (const QString& member : members) {
+        int i = 0;
+        const MemberSpec spec = parseSpecAt(member, i);
+        if (!spec.name.isEmpty())
+            specs.append(spec);
+    }
+    if (specs.isEmpty())
+        return scalarText(v);
+    if (v.isArray()) {
+        const QJsonArray arr = v.toArray();
+        QStringList parts;
+        const int n = qMin(arr.size(), specs.size());
+        for (int i = 0; i < n; ++i)
+            parts.append(formatWithSpec(arr.at(i), specs.at(i)));
+        for (int i = n; i < arr.size(); ++i)
+            parts.append(scalarText(arr.at(i)));
+        return parts.join(QLatin1Char(' '));
+    }
+    if (v.isObject()) {
+        const QJsonObject o = v.toObject();
+        QStringList parts;
+        QSet<QString> used;
+        for (const MemberSpec& spec : specs) {
+            if (!o.contains(spec.name))
+                continue;
+            parts.append(formatWithSpec(o.value(spec.name), spec));
+            used.insert(spec.name);
+        }
+        for (auto it = o.constBegin(); it != o.constEnd(); ++it) {
+            if (!used.contains(it.key()))
+                parts.append(it.key() + QLatin1Char('=') + scalarText(it.value()));
+        }
+        if (parts.isEmpty())
+            return scalarText(v);
+        return parts.join(QLatin1Char(' '));
+    }
+    if (specs.size() == 1)
+        return formatWithSpec(v, specs.at(0));
+    return scalarText(v);
+}
+
+QString formatReportValue(const QJsonValue& v)
+{
+    return formatReportMembers(v, {});
 }
 
 QString formatReportReason(int reasonCode)

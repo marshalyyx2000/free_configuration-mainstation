@@ -54,7 +54,10 @@ void ingestMmsReportEvent(ScdModelLoader& model, EventStore& store, QHash<QStrin
             desc = QStringLiteral("数据集条目 %1").arg(idx + 1);
             addr = QStringLiteral("#%1").arg(idx);
         }
-        const QString val = formatReportValue(it.value(QStringLiteral("value")));
+        QStringList mems;
+        if (ds && idx >= 0 && idx < ds->members.size())
+            mems = ds->members.at(idx).valueMembers;
+        const QString val = formatReportMembers(it.value(QStringLiteral("value")), mems);
         const int reason = it.value(QStringLiteral("reason")).toInt();
         const QString key = iedName + QLatin1Char('|') + addr;
         const QString oldVal = lastValues.value(key);
