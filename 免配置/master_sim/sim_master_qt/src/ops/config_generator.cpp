@@ -544,6 +544,9 @@ void injectSubstation(const QString& scdPath, const QString& destSmcd, const QVe
         if (icdFile.open(QIODevice::ReadOnly))
             data = mergeIcdDataTypes(data, icdFile.readAll());
     }
+    data = ConfigGenerator::ensureSubstationSddiTypes(data);
+    if (data.indexOf("id=\"SUBSTATION_SDDI_V2.00\"") < 0)
+        throw std::runtime_error("station.SMCD 缺少 LNodeType SUBSTATION_SDDI_V2.00");
 
     QByteArray out = sanitizeSclForGenconfig(data);
     bool labScdPro = false;
@@ -559,6 +562,97 @@ void injectSubstation(const QString& scdPath, const QString& destSmcd, const QVe
 }
 
 } // namespace
+
+QByteArray ConfigGenerator::ensureSubstationSddiTypes(QByteArray smcd)
+{
+    struct Block {
+        const char* id;
+        const char* xml;
+    };
+    static const Block kBlocks[] = {
+        { "SUBSTATION_SDDI_V2.00",
+            "<LNodeType id=\"SUBSTATION_SDDI_V2.00\" lnClass=\"SDDI\" desc=\"免配置保信子站状态监视信息\">"
+            "<DO name=\"Mod\" type=\"SUBSTATION_INC_Mod\" desc=\"Mode\"/>"
+            "<DO name=\"Beh\" type=\"SUBSTATION_INS_Beh\" desc=\"Behaviour\"/>"
+            "<DO name=\"Health\" type=\"SUBSTATION_INS_Health\" desc=\"Health\"/>"
+            "<DO name=\"NamPlt\" type=\"SUBSTATION_LPL_EX\" desc=\"Name Plate\"/>"
+            "<DO name=\"ComStatus\" type=\"SUBSTATION_SPS_EX\" desc=\"与对应IED的通信状态\"/>"
+            "</LNodeType>\n" },
+        { "SUBSTATION_INC_Mod",
+            "<DOType id=\"SUBSTATION_INC_Mod\" cdc=\"INC\">"
+            "<DA name=\"stVal\" bType=\"Enum\" type=\"Mod\" dchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"q\" bType=\"Quality\" qchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"t\" bType=\"Timestamp\" fc=\"ST\"/>"
+            "<DA name=\"ctlModel\" bType=\"Enum\" type=\"ctlModel\" fc=\"CF\"><Val>0</Val></DA>"
+            "</DOType>\n" },
+        { "SUBSTATION_INS_Beh",
+            "<DOType id=\"SUBSTATION_INS_Beh\" cdc=\"INS\">"
+            "<DA name=\"stVal\" bType=\"Enum\" type=\"Beh\" dchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"q\" bType=\"Quality\" qchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"t\" bType=\"Timestamp\" fc=\"ST\"/>"
+            "</DOType>\n" },
+        { "SUBSTATION_INS_Health",
+            "<DOType id=\"SUBSTATION_INS_Health\" cdc=\"INS\">"
+            "<DA name=\"stVal\" bType=\"Enum\" type=\"Health\" dchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"q\" bType=\"Quality\" qchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"t\" bType=\"Timestamp\" fc=\"ST\"/>"
+            "</DOType>\n" },
+        { "SUBSTATION_LPL_EX",
+            "<DOType id=\"SUBSTATION_LPL_EX\" cdc=\"LPL\">"
+            "<DA name=\"vendor\" bType=\"VisString255\" fc=\"DC\"/>"
+            "<DA name=\"swRev\" bType=\"VisString255\" fc=\"DC\"/>"
+            "<DA name=\"d\" bType=\"VisString255\" fc=\"DC\"/>"
+            "<DA name=\"dU\" bType=\"Unicode255\" fc=\"DC\"/>"
+            "<DA name=\"lnNs\" bType=\"VisString255\" fc=\"EX\"><Val>NR PCS979X:2015</Val></DA>"
+            "</DOType>\n" },
+        { "SUBSTATION_SPS_EX",
+            "<DOType id=\"SUBSTATION_SPS_EX\" cdc=\"SPS\">"
+            "<DA name=\"stVal\" bType=\"BOOLEAN\" dchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"q\" bType=\"Quality\" qchg=\"true\" fc=\"ST\"/>"
+            "<DA name=\"t\" bType=\"Timestamp\" fc=\"ST\"/>"
+            "<DA name=\"dU\" bType=\"Unicode255\" fc=\"DC\"/>"
+            "<DA name=\"dataNs\" bType=\"VisString255\" fc=\"EX\"><Val>NR PCS979X:2015</Val></DA>"
+            "</DOType>\n" },
+        { "Beh",
+            "<EnumType id=\"Beh\">"
+            "<EnumVal ord=\"1\">on</EnumVal><EnumVal ord=\"2\">blocked</EnumVal>"
+            "<EnumVal ord=\"3\">test</EnumVal><EnumVal ord=\"4\">test/blocked</EnumVal>"
+            "<EnumVal ord=\"5\">off</EnumVal></EnumType>\n" },
+        { "Mod",
+            "<EnumType id=\"Mod\">"
+            "<EnumVal ord=\"1\">on</EnumVal><EnumVal ord=\"2\">blocked</EnumVal>"
+            "<EnumVal ord=\"3\">test</EnumVal><EnumVal ord=\"4\">test/blocked</EnumVal>"
+            "<EnumVal ord=\"5\">off</EnumVal></EnumType>\n" },
+        { "Health",
+            "<EnumType id=\"Health\">"
+            "<EnumVal ord=\"1\">Ok</EnumVal><EnumVal ord=\"2\">Warning</EnumVal>"
+            "<EnumVal ord=\"3\">Alarm</EnumVal></EnumType>\n" },
+        { "ctlModel",
+            "<EnumType id=\"ctlModel\">"
+            "<EnumVal ord=\"0\">status-only</EnumVal>"
+            "<EnumVal ord=\"1\">direct-with-normal-security</EnumVal>"
+            "<EnumVal ord=\"2\">sbo-with-normal-security</EnumVal>"
+            "<EnumVal ord=\"3\">direct-with-enhanced-security</EnumVal>"
+            "<EnumVal ord=\"4\">sbo-with-enhanced-security</EnumVal></EnumType>\n" },
+    };
+
+    QByteArray insert;
+    for (const Block& block : kBlocks) {
+        const QByteArray needle = QByteArray("id=\"") + block.id + "\"";
+        if (smcd.indexOf(needle) >= 0 || insert.indexOf(needle) >= 0)
+            continue;
+        insert.append(block.xml);
+    }
+    if (insert.isEmpty())
+        return smcd;
+    const int smcdEnd = smcd.indexOf("</DataTypeTemplates>");
+    if (smcdEnd >= 0)
+        return smcd.insert(smcdEnd, insert);
+    smcd.append("\n  <DataTypeTemplates>\n");
+    smcd.append(insert);
+    smcd.append("  </DataTypeTemplates>\n");
+    return smcd;
+}
 
 QVector<ConnectedDeviceEntry> ConfigGenerator::parseConnectedAps(const QString& scdPath)
 {

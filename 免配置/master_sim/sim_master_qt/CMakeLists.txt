@@ -108,6 +108,23 @@ if(MSVC)
   target_compile_options(test_event_format PRIVATE /utf-8)
 endif()
 
+add_executable(test_sddi_types
+    tests/test_sddi_types.cpp
+    src/ops/config_generator.cpp
+    src/ops/station_zip_writer.cpp
+    src/util/app_paths.cpp
+)
+target_include_directories(test_sddi_types PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/miniz
+)
+target_link_libraries(test_sddi_types PRIVATE Qt6::Core Qt6::Test miniz_vendored)
+file(TO_CMAKE_PATH "${CMAKE_CURRENT_LIST_DIR}/../../子站scd" SIM_SCD_DIR)
+target_compile_definitions(test_sddi_types PRIVATE "SIM_SCD_DIR=\"${SIM_SCD_DIR}\"")
+if(MSVC)
+  target_compile_options(test_sddi_types PRIVATE /utf-8)
+endif()
+
 add_executable(test_fcda_members
     tests/test_fcda_members.cpp
     src/scd/scd_model.cpp

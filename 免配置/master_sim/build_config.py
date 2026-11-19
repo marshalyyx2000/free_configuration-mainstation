@@ -19,6 +19,7 @@ from gen_substation_icd import (  # noqa: E402
     DEFAULT_TEMPLATE,
     copy_icd_to_out,
     generate_icd,
+    ensure_sddi_types,
     merge_icd_datatypes,
     parse_iedlist,
     substation_ied_xml,
@@ -238,6 +239,9 @@ def inject_substation(scd_path: Path, dest_smcd: Path, devices: list[ConnectedDe
     template = DEFAULT_TEMPLATE
     if template.is_file():
         text = merge_icd_datatypes(text, template.read_text(encoding="utf-8"))
+    text = ensure_sddi_types(text)
+    if 'id="SUBSTATION_SDDI_V2.00"' not in text:
+        raise RuntimeError("station.SMCD 缺少 LNodeType SUBSTATION_SDDI_V2.00")
     dest_smcd.write_text(text, encoding="utf-8")
 
 
